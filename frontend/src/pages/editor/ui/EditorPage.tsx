@@ -15,6 +15,11 @@ export function EditorPage() {
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [title, setTitle] = useState('')
   const [viewMode, setViewMode] = useState<'final' | 'preview' | 'astra' | 'code'>('final')
+  const [assistantOpen, setAssistantOpen] = useState(true)
+  const [notification, setNotification] = useState<string | null>(null)
+  const [publishConfirmationOpen, setPublishConfirmationOpen] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([])
   const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: ['document', documentId],
@@ -25,7 +30,11 @@ export function EditorPage() {
   })
   const exportPdf = useMutation({
     mutationFn: () => exportDocumentPdf(documentId!),
-    onSuccess: ({ url }) => window.open(url, '_blank', 'noopener,noreferrer'),
+    onSuccess: ({ url }) => {
+      setNotification('PDF сформирован и открыт в новой вкладке')
+      window.open(url, '_blank', 'noopener,noreferrer')
+    },
+    onError: () => setNotification('Не удалось сформировать PDF. Повторите попытку.'),
   })
   const pdfPreview = useQuery({
     queryKey: ['document-pdf-preview', documentId, revision],
@@ -35,7 +44,12 @@ export function EditorPage() {
   })
   const publication = useMutation({
     mutationFn: () => publishDocument(documentId!),
-    onSuccess: ({ url }) => window.open(url, '_blank', 'noopener,noreferrer'),
+    onSuccess: ({ url }) => {
+      setPublishConfirmationOpen(false)
+      setNotification('Документ опубликован')
+      window.open(url, '_blank', 'noopener,noreferrer')
+    },
+    onError: () => setNotification('Не удалось опубликовать документ. Повторите попытку.'),
   })
   const rename = useMutation({
     mutationFn: (nextTitle: string) => renameDocument(documentId!, nextTitle),
@@ -58,11 +72,18 @@ export function EditorPage() {
   }
 
   const document = query.data
+  const saveStatus = {
+    saved: 'Все изменения сохранены',
+    changed: 'Есть несохранённые изменения',
+    saving: 'Сохранение…',
+    error: 'Не удалось сохранить',
+  }[saveState]
+
   return (
     <main className={styles.page}>
       <header className={styles.header}>
-        <Link to="/" aria-label="Вернуться к документам">←</Link>
-        <div>
+        <Link className={styles.backButton} to="/" aria-label="К документам" title="К документам">←</Link>
+        <div className={styles.documentIdentity}>
           <input
             className={styles.titleInput}
             aria-label="Название документа"
@@ -77,61 +98,71 @@ export function EditorPage() {
               if (event.key === 'Enter') event.currentTarget.blur()
             }}
           />
-          <span>{document.status}</span>
+          <span
+            className={`${styles.saveStatus} ${styles[saveState]}`}
+            aria-live="polite"
+            title={saveError ?? undefined}
+          >
+            <span aria-hidden="true" />
+            {rename.isPending ? 'Сохранение названия…' : saveError ?? saveStatus}
+          </span>
         </div>
         <div className={styles.actions}>
-          <button type="button" disabled={exportPdf.isPending} onClick={() => exportPdf.mutate()}>
+          <button
+            className={styles.secondaryAction}
+            type="button"
+            disabled={exportPdf.isPending || saveState !== 'saved'}
+            title={saveState === 'saved' ? 'Сформировать PDF текущей версии' : 'Дождитесь сохранения изменений'}
+            onClick={() => exportPdf.mutate()}
+          >
+            <span aria-hidden="true">↓</span>
             {exportPdf.isPending ? 'Формирование…' : 'Экспорт PDF'}
           </button>
-          <button type="button" disabled={publication.isPending} onClick={() => publication.mutate()}>
-            {publication.isPending ? 'Публикация…' : 'Опубликовать'}
+          <button
+            className={styles.primaryAction}
+            type="button"
+            disabled={publication.isPending || saveState !== 'saved'}
+            onClick={() => setPublishConfirmationOpen(true)}
+          >
+            Опубликовать
           </button>
         </div>
       </header>
       {document.status === 'ready' && document.html ? (
-        <div className={`${styles.editorLayout} ${viewMode !== 'final' ? styles.debugLayout : ''}`}>
+        <div className={`${styles.editorLayout} ${viewMode !== 'final' || !assistantOpen ? styles.panelClosed : ''}`}>
           <section className={styles.documentColumn}>
             <nav className={styles.viewSwitcher} aria-label="Режим просмотра документа">
-              <button
-                type="button"
-                aria-pressed={viewMode === 'final'}
-                onClick={() => setViewMode('final')}
-              >
-                Редактор
-              </button>
-              <button
-                type="button"
-                aria-pressed={viewMode === 'preview'}
-                disabled={saveState !== 'saved'}
-                title={saveState === 'saved' ? 'Точный вид экспортируемого PDF' : 'Дождитесь сохранения изменений'}
-                onClick={() => setViewMode('preview')}
-              >
-                Предпросмотр PDF
-              </button>
-              <button
-                type="button"
-                aria-pressed={viewMode === 'astra'}
-                disabled={!document.astra_html}
-                title={document.astra_html ? undefined : 'Доступно для документов, обработанных после обновления'}
-                onClick={() => setViewMode('astra')}
-              >
-                Отображение Astra
-              </button>
-              <button
-                type="button"
-                aria-pressed={viewMode === 'code'}
-                disabled={!document.astra_html}
-                title={document.astra_html ? undefined : 'Доступно для документов, обработанных после обновления'}
-                onClick={() => setViewMode('code')}
-              >
-                HTML Astra
-              </button>
-              {viewMode === 'preview' && (
-                <span>Точный печатный вид — совпадает с экспортом PDF</span>
-              )}
-              {(viewMode === 'astra' || viewMode === 'code') && (
-                <span>Диагностический режим — редактирование и автосохранение отключены</span>
-              )}
+              <div className={styles.modeTabs} role="tablist" aria-label="Режим документа">
+                <button role="tab" type="button" aria-selected={viewMode === 'final'} onClick={() => setViewMode('final')}>
+                  Редактор
+                </button>
+                <button
+                  role="tab"
+                  type="button"
+                  aria-selected={viewMode === 'preview'}
+                  disabled={saveState !== 'saved'}
+                  title={saveState === 'saved' ? 'Точный вид экспортируемого PDF' : 'Предпросмотр станет доступен после сохранения'}
+                  onClick={() => setViewMode('preview')}
+                >
+                  Предпросмотр PDF
+                </button>
+              </div>
+              <div className={styles.viewActions}>
+                {viewMode === 'final' && !assistantOpen && (
+                  <button type="button" onClick={() => setAssistantOpen(true)}>Открыть помощника</button>
+                )}
+                <details className={styles.diagnostics}>
+                  <summary aria-label="Диагностические режимы" title="Диагностические режимы">⋯</summary>
+                  <div>
+                    <button type="button" disabled={!document.astra_html} onClick={() => setViewMode('astra')}>
+                      Отображение Astra
+                    </button>
+                    <button type="button" disabled={!document.astra_html} onClick={() => setViewMode('code')}>
+                      Исходный HTML Astra
+                    </button>
+                  </div>
+                </details>
+              </div>
             </nav>
             {viewMode === 'preview' ? (
               <section className={styles.pdfPreview} aria-label="Предпросмотр PDF">
@@ -169,16 +200,20 @@ export function EditorPage() {
                 editable={viewMode === 'final' && !assistantBusy}
                 onRevisionChange={viewMode === 'final' ? setRevision : undefined}
                 onSaveStateChange={viewMode === 'final' ? setSaveState : undefined}
+                onSaveError={viewMode === 'final' ? setSaveError : undefined}
+                onSelectionChange={viewMode === 'final' ? setSelectedBlockIds : undefined}
               />
             )}
           </section>
-          {viewMode === 'final' && (
+          {viewMode === 'final' && assistantOpen && (
             <DocumentAssistant
               documentId={document.id}
               revision={revision}
               canMutate={saveState === 'saved'}
+              selectedBlockIds={selectedBlockIds}
               onRevisionChange={setRevision}
               onBusyChange={setAssistantBusy}
+              onClose={() => setAssistantOpen(false)}
             />
           )}
         </div>
@@ -187,6 +222,32 @@ export function EditorPage() {
           <h2>Документ обрабатывается</h2>
           <p>Страница обновится автоматически после завершения GPT Astra 6.</p>
         </section>
+      )}
+      {notification && (
+        <div className={styles.notification} role="status">
+          <span>{notification}</span>
+          <button type="button" aria-label="Закрыть уведомление" onClick={() => setNotification(null)}>×</button>
+        </div>
+      )}
+      {publishConfirmationOpen && (
+        <div className={styles.modalBackdrop} role="presentation" onMouseDown={() => setPublishConfirmationOpen(false)}>
+          <section
+            className={styles.modal}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="publish-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="publish-title">Опубликовать документ?</h2>
+            <p>Будет опубликована версия {revision} документа «{document.title}».</p>
+            <div>
+              <button type="button" onClick={() => setPublishConfirmationOpen(false)}>Отмена</button>
+              <button className={styles.primaryAction} type="button" disabled={publication.isPending} onClick={() => publication.mutate()}>
+                {publication.isPending ? 'Публикация…' : 'Опубликовать'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </main>
   )

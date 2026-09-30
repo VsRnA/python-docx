@@ -14,8 +14,8 @@ GLOBAL_ATTRIBUTES = {
 TAG_ATTRIBUTES = {
     "a": {"href", "target", "rel"},
     "img": {"src", "alt", "width", "height"},
-    "th": {"colspan", "rowspan", "scope"},
-    "td": {"colspan", "rowspan"},
+    "th": {"colspan", "rowspan", "colwidth", "scope"},
+    "td": {"colspan", "rowspan", "colwidth"},
     "p": {"style"},
     "h1": {"style"},
     "h2": {"style"},
@@ -50,6 +50,9 @@ class _ContractParser(HTMLParser):
             flags=re.IGNORECASE,
         ):
             raise HtmlContractError(f"Inline style is not allowed: {style}")
+        colwidth = (attrs_map.get("colwidth") or "").strip()
+        if colwidth and not re.fullmatch(r"[1-9]\d*(,[1-9]\d*)*", colwidth):
+            raise HtmlContractError(f"Invalid table column width: {colwidth}")
         classes = set((attrs_map.get("class") or "").split())
         unknown_classes = classes - self.allowed_classes
         if unknown_classes:

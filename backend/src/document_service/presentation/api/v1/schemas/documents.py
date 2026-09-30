@@ -60,6 +60,7 @@ class TranslateDocumentRequest(BaseModel):
 class AiEditRequest(BaseModel):
     base_revision: int
     instruction: str
+    target_block_ids: list[str] = Field(default_factory=list)
 
 
 class AiEditResponse(BaseModel):

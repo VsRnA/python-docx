@@ -41,10 +41,19 @@ export function restoreDocumentVersion(id: string, baseRevision: number, sourceR
   })
 }
 
-export function editDocumentWithAi(id: string, baseRevision: number, instruction: string) {
+export function editDocumentWithAi(
+  id: string,
+  baseRevision: number,
+  instruction: string,
+  targetBlockIds: string[] = [],
+) {
   return apiRequest<{ revision: number; summary: string }>(`/documents/${id}/ai-edits`, {
     method: 'POST',
-    body: JSON.stringify({ base_revision: baseRevision, instruction }),
+    body: JSON.stringify({
+      base_revision: baseRevision,
+      instruction,
+      target_block_ids: targetBlockIds,
+    }),
   })
 }
 

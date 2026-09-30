@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     auth_issuer: str = ""
     auth_audience: str = ""
     auth_jwks_url: str = ""
+    basic_auth_username: str = ""
+    basic_auth_password: str = ""
+    basic_auth_user_id: str = "00000000-0000-0000-0000-000000000001"
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
 
     @property
@@ -62,6 +65,8 @@ class Settings(BaseSettings):
             "AUTH_ISSUER": self.auth_issuer,
             "AUTH_AUDIENCE": self.auth_audience,
             "AUTH_JWKS_URL": self.auth_jwks_url,
+            "BASIC_AUTH_USERNAME": self.basic_auth_username,
+            "BASIC_AUTH_PASSWORD": self.basic_auth_password,
         }
         missing = [name for name, value in required.items() if not value]
         if missing:

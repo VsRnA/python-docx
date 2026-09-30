@@ -3,10 +3,11 @@ import asyncio
 from functools import lru_cache
 from typing import Annotated
 from uuid import NAMESPACE_URL, UUID, uuid5
+import secrets
 
 import jwt
 from fastapi import Depends, Header, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from jwt import PyJWKClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,7 @@ from document_service.infrastructure.config.settings import get_settings
 from document_service.infrastructure.database.session import async_session_factory
 
 bearer = HTTPBearer(auto_error=False)
+basic = HTTPBasic(auto_error=False)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -28,9 +30,39 @@ def _jwks_client(url: str) -> PyJWKClient:
 
 async def get_current_user_id(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    basic_credentials: Annotated[HTTPBasicCredentials | None, Depends(basic)],
     x_user_id: str | None = Header(default=None, alias="X-User-ID"),
 ) -> UUID:
     settings = get_settings()
+    if settings.basic_auth_username and settings.basic_auth_password:
+        if basic_credentials is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Basic authentication is required",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        username_matches = secrets.compare_digest(
+            basic_credentials.username.encode("utf-8"),
+            settings.basic_auth_username.encode("utf-8"),
+        )
+        password_matches = secrets.compare_digest(
+            basic_credentials.password.encode("utf-8"),
+            settings.basic_auth_password.encode("utf-8"),
+        )
+        if not (username_matches and password_matches):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid basic authentication credentials",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        try:
+            return UUID(settings.basic_auth_user_id)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Invalid BASIC_AUTH_USER_ID setting",
+            ) from error
+
     if settings.app_env != "production" and x_user_id:
         try:
             return UUID(x_user_id)

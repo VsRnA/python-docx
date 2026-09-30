@@ -28,6 +28,7 @@ class DocumentAiEditor(Protocol):
         instruction: str,
         base_revision: int,
         block_hashes: dict[str, str],
+        target_block_ids: list[str] | None,
         prompt_package_version: str,
         theme_id: str,
         theme_version: str,

@@ -116,6 +116,7 @@ class OpenAIAstraDocumentProcessor:
         instruction: str,
         base_revision: int,
         block_hashes: dict[str, str],
+        target_block_ids: list[str] | None,
         prompt_package_version: str,
         theme_id: str,
         theme_version: str,
@@ -127,6 +128,7 @@ class OpenAIAstraDocumentProcessor:
             instruction,
             base_revision,
             block_hashes,
+            target_block_ids,
             package.system,
             package.task,
             package.schema,
@@ -468,6 +470,7 @@ class OpenAIAstraDocumentProcessor:
         instruction: str,
         base_revision: int,
         block_hashes: dict[str, str],
+        target_block_ids: list[str] | None,
         system: str,
         task: str,
         schema: str,
@@ -482,6 +485,7 @@ class OpenAIAstraDocumentProcessor:
             "theme_version": theme_version,
             "instruction": instruction,
             "block_hashes": block_hashes,
+            "target_block_ids": target_block_ids or [],
             "html": html,
         }
         response = self._client.responses.create(

@@ -6,6 +6,7 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import { useEffect, useRef, useState } from 'react'
 
 import { saveDocument } from '@/entities/document'
+import { ApiError } from '@/shared/api/client'
 import {
   ManualFigure,
   ManualCaption,
@@ -60,6 +61,8 @@ interface DocumentEditorProps {
   editable?: boolean
   onRevisionChange?: (revision: number) => void
   onSaveStateChange?: (state: 'saved' | 'changed' | 'saving' | 'error') => void
+  onSaveError?: (message: string | null) => void
+  onSelectionChange?: (blockIds: string[]) => void
 }
 
 function resolveAssetUrls(html: string, assetUrls: Record<string, string>) {
@@ -148,6 +151,48 @@ function restoreAssetReferences(html: string, assetUrls: Record<string, string>)
   )
 }
 
+function normalizeCanonicalHtml(html: string) {
+  const container = window.document.createElement('div')
+  container.innerHTML = html
+  // Tiptap adds editor-only table sizing markup. Canonical column widths live in colwidth.
+  container.querySelectorAll('colgroup').forEach((element) => element.remove())
+  container.querySelectorAll('table[style], tbody[style], tr[style], th[style], td[style]')
+    .forEach((element) => element.removeAttribute('style'))
+  const selector = [
+    'p', 'h1', 'h2', 'h3', 'h4', 'section', 'div.manual-page-break',
+    'ul', 'ol', 'li', 'table', 'tr', 'th', 'td', 'figure', 'figcaption',
+  ].join(',')
+  container.querySelectorAll(selector).forEach((element) => {
+    if (element.closest('header.manual-header, footer.manual-footer')) return
+    if (!element.hasAttribute('data-block-id')) {
+      element.setAttribute('data-block-id', `b_${crypto.randomUUID()}`)
+    }
+    if (!element.hasAttribute('data-block-type')) {
+      element.setAttribute('data-block-type', element.tagName.toLowerCase())
+    }
+  })
+  return container.innerHTML
+}
+
+function saveErrorMessage(error: unknown) {
+  if (!(error instanceof ApiError)) return 'Неизвестная ошибка сервера'
+  if (typeof error.details === 'object' && error.details && 'detail' in error.details) {
+    const detail = (error.details as { detail?: unknown }).detail
+    if (typeof detail === 'string') return detail
+  }
+  return `Сервер вернул ошибку ${error.status}`
+}
+
+function selectedBlockIds(editor: NonNullable<ReturnType<typeof useEditor>>) {
+  const { doc, selection } = editor.state
+  const ids = new Set<string>()
+  doc.nodesBetween(selection.from, selection.to, (node) => {
+    const blockId = node.attrs.blockId
+    if (node.isBlock && typeof blockId === 'string' && blockId) ids.add(blockId)
+  })
+  return Array.from(ids)
+}
+
 export function DocumentEditor({
   documentId,
   revision,
@@ -156,8 +201,12 @@ export function DocumentEditor({
   editable = true,
   onRevisionChange,
   onSaveStateChange,
+  onSaveError,
+  onSelectionChange,
 }: DocumentEditorProps) {
   const [saveState, setSaveState] = useState<'saved' | 'changed' | 'saving' | 'error'>('saved')
+  const [tablePickerOpen, setTablePickerOpen] = useState(false)
+  const [tableSize, setTableSize] = useState({ rows: 3, cols: 3 })
   const revisionRef = useRef(revision)
   const shellRef = useRef(documentShell(html))
   const editorDocumentRef = useRef(
@@ -230,6 +279,9 @@ export function DocumentEditor({
       changeSequenceRef.current += 1
       setSaveState('changed')
     },
+    onSelectionUpdate: ({ editor: selectedEditor }) => {
+      onSelectionChange?.(selectedBlockIds(selectedEditor))
+    },
   })
 
   useEffect(() => {
@@ -263,6 +315,11 @@ export function DocumentEditor({
   }, [onSaveStateChange, saveState])
 
   useEffect(() => {
+    if (!editor) return
+    onSelectionChange?.(selectedBlockIds(editor))
+  }, [editor, onSelectionChange, revision])
+
+  useEffect(() => {
     if (!editor || saveState !== 'changed') return
     const timeout = window.setTimeout(async () => {
       if (savingRef.current) return
@@ -272,59 +329,109 @@ export function DocumentEditor({
           const savingSequence = changeSequenceRef.current
           setSaveState('saving')
           const unpagedHtml = fromEditorPages(editor.getHTML(), editorDocumentRef.current)
-          const editorHtml = restoreAssetReferences(unpagedHtml, assetUrls)
+          const editorHtml = normalizeCanonicalHtml(restoreAssetReferences(unpagedHtml, assetUrls))
           const canonicalHtml = `${shellRef.current.opening}${editorHtml}${shellRef.current.closing}`
           const result = await saveDocument(documentId, revisionRef.current, canonicalHtml)
           revisionRef.current = result.revision
           savedSequenceRef.current = savingSequence
+          onSaveError?.(null)
           onRevisionChange?.(result.revision)
         } while (changeSequenceRef.current > savedSequenceRef.current)
         setSaveState('saved')
-      } catch {
+      } catch (error) {
         setSaveState('error')
+        onSaveError?.(saveErrorMessage(error))
       } finally {
         savingRef.current = false
       }
     }, 1200)
     return () => window.clearTimeout(timeout)
-  }, [assetUrls, documentId, editor, onRevisionChange, saveState])
+  }, [assetUrls, documentId, editor, onRevisionChange, onSaveError, saveState])
 
   if (!editor) return null
 
   return (
     <div className={styles.workspace}>
       <div className={styles.toolbar} role="toolbar" aria-label="Форматирование">
-        <select
-          aria-label="Стиль абзаца"
-          disabled={!editable}
-          value={
-            editor.isActive('heading', { level: 1 }) ? 'h1'
-              : editor.isActive('heading', { level: 2 }) ? 'h2'
-                : editor.isActive('heading', { level: 3 }) ? 'h3'
-                  : 'p'
-          }
-          onChange={(event) => {
-            const value = event.target.value
-            if (value === 'p') editor.chain().focus().setParagraph().run()
-            else editor.chain().focus().setHeading({ level: Number(value.slice(1)) as 1 | 2 | 3 }).run()
-          }}
-        >
-          <option value="p">Обычный текст</option>
-          <option value="h1">Заголовок 1</option>
-          <option value="h2">Заголовок 2</option>
-          <option value="h3">Заголовок 3</option>
-        </select>
-        <button type="button" disabled={!editable} aria-pressed={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}>Жирный</button>
-        <button type="button" disabled={!editable} aria-pressed={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}>Курсив</button>
-        <button type="button" disabled={!editable} aria-pressed={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}>Подчеркнуть</button>
-        <button type="button" disabled={!editable} aria-pressed={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}>Список</button>
-        <button type="button" disabled={!editable} aria-pressed={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>Нумерация</button>
-        <button type="button" disabled={!editable} onClick={() => editor.chain().focus().setTextAlign('left').run()}>Слева</button>
-        <button type="button" disabled={!editable} onClick={() => editor.chain().focus().setTextAlign('center').run()}>По центру</button>
-        <button type="button" disabled={!editable} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}>Таблица</button>
-        <button type="button" disabled={!editable || !editor.can().chain().focus().undo().run()} onClick={() => editor.chain().focus().undo().run()}>Отменить</button>
-        <button type="button" disabled={!editable || !editor.can().chain().focus().redo().run()} onClick={() => editor.chain().focus().redo().run()}>Повторить</button>
-        <span className={styles.saveState}>{saveState}</span>
+        <div className={styles.toolGroup}>
+          <select
+            aria-label="Стиль абзаца"
+            disabled={!editable}
+            value={
+              editor.isActive('heading', { level: 1 }) ? 'h1'
+                : editor.isActive('heading', { level: 2 }) ? 'h2'
+                  : editor.isActive('heading', { level: 3 }) ? 'h3'
+                    : 'p'
+            }
+            onChange={(event) => {
+              const value = event.target.value
+              if (value === 'p') editor.chain().focus().setParagraph().run()
+              else editor.chain().focus().setHeading({ level: Number(value.slice(1)) as 1 | 2 | 3 }).run()
+            }}
+          >
+            <option value="p">Обычный текст</option>
+            <option value="h1">Заголовок 1</option>
+            <option value="h2">Заголовок 2</option>
+            <option value="h3">Заголовок 3</option>
+          </select>
+        </div>
+        <div className={styles.toolGroup}>
+          <button className={styles.bold} type="button" title="Жирный (⌘B)" aria-label="Жирный" disabled={!editable} aria-pressed={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}>B</button>
+          <button className={styles.italic} type="button" title="Курсив (⌘I)" aria-label="Курсив" disabled={!editable} aria-pressed={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}>I</button>
+          <button className={styles.underline} type="button" title="Подчёркивание (⌘U)" aria-label="Подчёркивание" disabled={!editable} aria-pressed={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}>U</button>
+        </div>
+        <div className={styles.toolGroup}>
+          <button type="button" title="Маркированный список" aria-label="Маркированный список" disabled={!editable} aria-pressed={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}>•≡</button>
+          <button type="button" title="Нумерованный список" aria-label="Нумерованный список" disabled={!editable} aria-pressed={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1≡</button>
+        </div>
+        <div className={styles.toolGroup}>
+          <button className={styles.alignLeft} type="button" title="По левому краю" aria-label="По левому краю" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()}>≡</button>
+          <button className={styles.alignCenter} type="button" title="По центру" aria-label="По центру" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()}>≡</button>
+          <button className={styles.alignRight} type="button" title="По правому краю" aria-label="По правому краю" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()}>≡</button>
+          <button type="button" title="По ширине" aria-label="По ширине" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'justify' })} onClick={() => editor.chain().focus().setTextAlign('justify').run()}>☰</button>
+        </div>
+        <div className={`${styles.toolGroup} ${styles.tableControl}`}>
+          <button
+            type="button"
+            title="Вставить таблицу"
+            aria-label="Вставить таблицу"
+            aria-expanded={tablePickerOpen}
+            disabled={!editable}
+            onClick={() => setTablePickerOpen((open) => !open)}
+          >
+            ▦
+          </button>
+          {tablePickerOpen && (
+            <div className={styles.tablePicker}>
+              <strong>{tableSize.cols} × {tableSize.rows}</strong>
+              <div className={styles.tableGrid}>
+                {Array.from({ length: 25 }, (_, index) => {
+                  const row = Math.floor(index / 5) + 1
+                  const col = (index % 5) + 1
+                  const active = row <= tableSize.rows && col <= tableSize.cols
+                  return (
+                    <button
+                      key={`${row}-${col}`}
+                      type="button"
+                      aria-label={`Таблица ${col} на ${row}`}
+                      data-active={active}
+                      onMouseEnter={() => setTableSize({ rows: row, cols: col })}
+                      onFocus={() => setTableSize({ rows: row, cols: col })}
+                      onClick={() => {
+                        editor.chain().focus().insertTable({ rows: row, cols: col, withHeaderRow: true }).run()
+                        setTablePickerOpen(false)
+                      }}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className={`${styles.toolGroup} ${styles.historyTools}`}>
+          <button type="button" title="Отменить (⌘Z)" aria-label="Отменить" disabled={!editable || !editor.can().chain().focus().undo().run()} onClick={() => editor.chain().focus().undo().run()}>↶</button>
+          <button type="button" title="Повторить (⇧⌘Z)" aria-label="Повторить" disabled={!editable || !editor.can().chain().focus().redo().run()} onClick={() => editor.chain().focus().redo().run()}>↷</button>
+        </div>
       </div>
       <div className={styles.canvas}>
         <EditorContent className={styles.document} editor={editor} />

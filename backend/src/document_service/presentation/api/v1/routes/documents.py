@@ -333,6 +333,7 @@ async def edit_document_with_ai(
             owner_id=owner_id,
             base_revision=payload.base_revision,
             instruction=payload.instruction,
+            target_block_ids=payload.target_block_ids,
         )
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error

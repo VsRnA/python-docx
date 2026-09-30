@@ -43,6 +43,7 @@ class EditDocumentWithAi:
         owner_id: UUID,
         base_revision: int,
         instruction: str,
+        target_block_ids: list[str] | None = None,
     ) -> tuple[int, str]:
         document = await self._documents.get(document_id)
         if document is None or document.owner_id != owner_id:
@@ -57,15 +58,26 @@ class EditDocumentWithAi:
         if not instruction.strip():
             raise ValueError("AI edit instruction must not be empty")
 
+        block_hashes = self._changes.block_hashes(version.html)
+        normalized_target_block_ids = list(dict.fromkeys(target_block_ids or []))
+        unknown_block_ids = [block_id for block_id in normalized_target_block_ids if block_id not in block_hashes]
+        if unknown_block_ids:
+            raise ValueError("Selected blocks were not found: " + ", ".join(unknown_block_ids[:10]))
+
         change_set = await self._editor.edit(
             html=version.html,
             instruction=instruction.strip(),
             base_revision=base_revision,
-            block_hashes=self._changes.block_hashes(version.html),
+            block_hashes=block_hashes,
+            target_block_ids=normalized_target_block_ids or None,
             prompt_package_version=self._prompt_package_version,
             theme_id=version.theme_id,
             theme_version=version.theme_version,
         )
+        if normalized_target_block_ids:
+            allowed = set(normalized_target_block_ids)
+            if any(operation.block_id not in allowed for operation in change_set.operations):
+                raise ValueError("AI edit changed blocks outside the selected area")
         changed_html = self._changes.apply(
             version.html,
             change_set,
@@ -89,7 +101,11 @@ class EditDocumentWithAi:
                 AiMessage(
                     document_id=document_id,
                     role="user",
-                    content=instruction.strip(),
+                    content=(
+                        instruction.strip()
+                        if not normalized_target_block_ids
+                        else f"{instruction.strip()}\n\nОбласть: {len(normalized_target_block_ids)} блок(ов)"
+                    ),
                     revision=base_revision,
                 ),
                 AiMessage(

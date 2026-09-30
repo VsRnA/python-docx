@@ -30,6 +30,26 @@ def test_contract_accepts_internal_toc_link_and_id() -> None:
     )
 
 
+def test_contract_accepts_tiptap_table_column_widths() -> None:
+    validator = HtmlContractValidator({"manual-table"})
+    validator.validate(
+        '<table class="manual-table" data-block-id="table-1"><tbody><tr>'
+        '<th colspan="1" rowspan="1" colwidth="180">Name</th>'
+        '<td colspan="1" rowspan="1" colwidth="180,240">Value</td>'
+        '</tr></tbody></table>'
+    )
+
+
+def test_contract_rejects_invalid_table_column_widths() -> None:
+    validator = HtmlContractValidator({"manual-table"})
+    with pytest.raises(HtmlContractError, match="Invalid table column width"):
+        validator.validate(
+            '<table class="manual-table" data-block-id="table-1"><tbody><tr>'
+            '<td colwidth="180; color: red">Value</td>'
+            '</tr></tbody></table>'
+        )
+
+
 def test_contract_rejects_relative_external_resource() -> None:
     validator = HtmlContractValidator({"manual-figure"})
     with pytest.raises(HtmlContractError, match="URL scheme is not allowed"):
