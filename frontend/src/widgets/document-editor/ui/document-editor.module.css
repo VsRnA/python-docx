@@ -1,0 +1,317 @@
+.workspace {
+  min-height: calc(100vh - 64px);
+}
+
+.toolbar {
+  position: sticky;
+  z-index: 10;
+  top: 64px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 48px;
+  padding: 6px 24px;
+  overflow-x: auto;
+  background: #fff;
+  border-bottom: 1px solid #d9dde3;
+}
+
+.toolbar select {
+  min-height: 32px;
+  padding: 0 8px;
+  background: #fff;
+  border: 1px solid #d5d9de;
+  border-radius: 6px;
+}
+
+.toolbar button {
+  min-height: 32px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.toolbar button:hover {
+  background: #f1f3f4;
+}
+
+.toolbar button[aria-pressed='true'] { background: #e8f0fe; }
+.toolbar button:disabled { opacity: .45; }
+
+.saveState {
+  margin-left: auto;
+  color: #697077;
+  font-size: 12px;
+}
+
+.canvas {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  padding: 32px 24px 96px;
+  overflow-x: auto;
+}
+
+.document {
+  width: 210mm;
+  max-width: 100%;
+}
+
+.document :global(.ProseMirror) {
+  display: flex;
+  flex-direction: column;
+  gap: 12mm;
+  align-items: center;
+  width: 210mm;
+  max-width: 100%;
+  outline: none;
+}
+
+.document :global(.manual-page) {
+  position: relative;
+  box-sizing: border-box;
+  width: 210mm;
+  min-height: 297mm;
+  padding: 24mm 13mm 18mm;
+  overflow: visible;
+  color: #050505;
+  background: #fff;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 14%);
+  font-family: Lato, Arial, Helvetica, sans-serif;
+  font-size: 11pt;
+  line-height: 1.38;
+}
+
+.document :global(.manual-page.ProseMirror-selectednode) {
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+
+.document :global(.manual-header) {
+  position: absolute;
+  z-index: 2;
+  top: 5mm;
+  right: 13mm;
+  left: 13mm;
+  align-items: center;
+  height: 10mm;
+  padding: 2.2mm 5mm;
+  color: #fff;
+  background: linear-gradient(90deg, #f67828 0%, #f67828 40%, #080604 100%);
+  border-radius: 7mm;
+  font-size: 8.5pt;
+  line-height: 1.6;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+}
+
+.document :global(.manual-header__mark) { float: right; font-weight: 900; font-style: italic; letter-spacing: -.4pt; }
+.document :global(.manual-header__title) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document :global(.manual-header__sites) { float: right; margin-left: 5mm; font-size: 7.5pt; white-space: nowrap; }
+.document :global(.manual-footer) {
+  position: absolute;
+  right: 13mm;
+  bottom: 5mm;
+  left: 13mm;
+  display: flex;
+  justify-content: space-between;
+  color: #888;
+  font-size: 9pt;
+  pointer-events: none;
+  user-select: none;
+}
+.document :global(.manual-footer__page::before) { color: #050505; content: attr(data-page-number); }
+.document :global(.manual-cover) { min-height: 297mm; margin: -24mm -13mm -18mm; overflow: hidden; }
+.document :global(.manual-cover__orange) { height: 62mm; padding: 15mm 16mm; color: #fff; background: #f67828; }
+.document :global(.manual-cover__hero) { width: 180mm; height: 127mm; margin: 7mm auto 0; overflow: hidden; }
+.document :global(.manual-cover__hero img) { width: 100%; height: 100%; object-fit: contain; }
+.document :global(.manual-cover__body) { margin: 4mm 16mm 0; padding-top: 9mm; border-top: 2mm solid #f67828; }
+.document :global(.manual-cover__title) { margin: 0 0 6mm; font-size: 19pt; font-weight: 500; line-height: 1.25; }
+.document :global(.manual-cover__model) { margin: 0 0 6mm; font-size: 26pt; font-weight: 900; line-height: 1.18; }
+.document :global(.manual-cover__meta) { margin: 0; font-size: 10.5pt; line-height: 1.5; }
+.document :global(.manual-cover__brand) { margin: 0; font-size: 38pt; font-weight: 900; font-style: italic; letter-spacing: -1.5pt; line-height: 1.1; }
+.document :global(.manual-cover__kicker) { margin: 7mm 0 0; font-size: 10pt; letter-spacing: 2pt; }
+.document :global(.manual-page-break) {
+  width: calc(100% + 22mm);
+  height: 12mm;
+  margin: 15mm -11mm 20mm;
+  background: #eef0f3;
+  border-top: 1px solid #d5d9de;
+  border-bottom: 1px solid #d5d9de;
+  box-shadow: inset 0 2px 6px rgb(0 0 0 / 5%);
+  cursor: default;
+}
+
+.document :global(.manual-heading--h1) {
+  margin: 0 0 6mm;
+  font-size: 16pt;
+  font-weight: 900;
+  line-height: 1.2;
+  text-transform: uppercase;
+  break-after: avoid;
+}
+
+.document :global(.manual-heading--h2) {
+  margin: 5mm 0 2mm;
+  font-size: 11.5pt;
+  font-weight: 900;
+  line-height: 1.3;
+  break-after: avoid;
+}
+
+.document :global(.manual-heading--h3) {
+  margin: 4mm 0 2mm;
+  font-size: 10.5pt;
+  font-weight: 900;
+  line-height: 1.3;
+  break-after: avoid;
+}
+
+.document :global(.manual-paragraph) {
+  margin: 0 0 3mm;
+  font-size: 11pt;
+  line-height: 1.38;
+  text-align: justify;
+}
+
+.document :global(.manual-warning) {
+  position: relative;
+  margin: 7mm 0 5mm;
+  padding: 6mm 5mm 4mm;
+  border: 1.7px dashed #f67828;
+  break-inside: avoid;
+}
+
+.document :global(.manual-warning--important),
+.document :global(.manual-warning--attention),
+.document :global(.manual-warning--warning),
+.document :global(.manual-warning--danger) {
+  break-inside: avoid;
+}
+
+.document :global(.manual-warning__title) {
+  display: table;
+  position: relative;
+  margin: -10mm 0 3mm -1mm;
+  padding: 1.3mm 4mm;
+  color: #fff;
+  background: #f67828;
+  border-radius: 5mm;
+  font-size: 11pt;
+  font-weight: 900;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.document :global(.manual-list) {
+  margin: 1mm 0 4mm;
+  padding-left: 7.5mm;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.document :global(.manual-list li) { margin-bottom: 1.6mm; padding-left: 1.5mm; }
+
+.document :global(.manual-figure) {
+  margin: 4mm auto 5mm;
+  text-align: center;
+  break-inside: avoid;
+}
+
+.document :global(.manual-figure img) {
+  display: block;
+  margin: 0 auto;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.document :global(.manual-figure--xs) { width: 35mm; margin-right: auto; margin-left: auto; }
+.document :global(.manual-figure--sm) { width: 55mm; margin-right: auto; margin-left: auto; }
+.document :global(.manual-figure--md) { width: 85mm; margin-right: auto; margin-left: auto; }
+.document :global(.manual-figure--lg) { width: 125mm; margin-right: auto; margin-left: auto; }
+.document :global(.manual-figure--wide) { width: 100%; }
+.document :global(.manual-figure__frame) { position: relative; width: 100%; }
+.document :global(.manual-figure__overlay) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.document :global(.manual-gallery) { display: grid; gap: 6mm; align-items: start; margin: 3mm 0; }
+.document :global(.manual-gallery--2) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.document :global(.manual-gallery--3) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.document :global(.manual-gallery .manual-figure) { width: auto; margin: 0; }
+.document :global(.manual-note) { margin: 4mm 0; padding: 3mm 4mm; border-left: 3px solid #f67828; background: #f5f5f5; break-inside: avoid; }
+.document :global(.manual-note__title) { margin: 0 0 1mm; font-size: 9.2pt; }
+.document :global(.manual-note__body) { font-size: 9.2pt; }
+.document :global(.manual-form__columns) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9mm; }
+.document :global(.manual-field) { margin: 0 0 4mm; padding-bottom: 1.5mm; border-bottom: 1px solid #aaa; font-size: 10pt; }
+
+.document :global(.manual-caption) {
+  margin-top: 2mm;
+  color: #444;
+  font-size: 9pt;
+  line-height: 1.3;
+}
+
+.document :global(.manual-columns--2),
+.document :global(.manual-legend) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7mm;
+}
+
+.document :global(.manual-legend__label) {
+  display: inline-block;
+  margin-bottom: 2.5mm;
+  padding: 1.2mm 3mm;
+  color: #fff;
+  background: #ff6b1a;
+  border-radius: 4mm;
+  font-size: 9pt;
+}
+
+.document :global(.manual-toc__row) { display: flex; align-items: baseline; margin: 0 0 2.7mm; font-weight: 600; }
+.document :global(.manual-toc__row)::after { order: 2; flex: 1; margin: 0 1mm; border-bottom: 1px dotted #222; content: ''; }
+.document :global(.manual-toc__title) { order: 1; }
+.document :global(.manual-toc__page) { order: 3; }
+
+.document :global(table) {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.document :global(.manual-table) {
+  margin: 3mm 0 5mm;
+  font-size: 9.5pt;
+  line-height: 1.26;
+}
+
+.document :global(.manual-table thead) {
+  color: #fff;
+  background: #000;
+}
+
+.document :global(td),
+.document :global(th) {
+  min-width: 0;
+  padding: 2.3mm 2.5mm;
+  overflow-wrap: break-word;
+  vertical-align: top;
+  border: 0;
+  border-bottom: 1px solid #b8b8b8;
+}
+
+.document :global(th) { padding: 3mm 2.5mm; color: #fff; background: #070707; font-weight: 900; text-align: left; }
+.document :global(.manual-table--specification td:first-child) { width: 38%; background: #f1f1f1; font-weight: 600; }
+.document :global(.manual-table--maintenance) { font-size: 8pt; line-height: 1.18; }
+.document :global(.manual-table--maintenance th:nth-child(n+3)) { color: #111; background: #f67828; }
+.document :global(.manual-table--maintenance td:nth-child(n+3)) { text-align: center; }
+.document :global(.manual-table--troubleshooting) { font-size: 9.2pt; }
+
+@media (max-width: 900px) {
+  .document,
+  .document :global(.ProseMirror) {
+    min-width: 210mm;
+  }
+}

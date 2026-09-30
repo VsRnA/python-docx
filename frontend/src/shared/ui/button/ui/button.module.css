@@ -1,0 +1,19 @@
+.button {
+  min-height: 40px;
+  padding: 0 18px;
+  color: #fff;
+  font-weight: 600;
+  background: #f47720;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: #dc6413;
+}
+
+.button:focus-visible {
+  outline: 3px solid rgb(244 119 32 / 30%);
+  outline-offset: 2px;
+}

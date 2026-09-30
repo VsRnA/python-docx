@@ -1,0 +1,132 @@
+# Operating systems
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.local
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Python environments and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Python build and package artifacts
+build/
+dist/
+downloads/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+wheels/
+MANIFEST
+
+# Python tooling and test caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pytype/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+pytestdebug.log
+
+# Node and frontend tooling
+node_modules/
+.npm/
+.yarn/
+.pnpm-store/
+.vite/
+.parcel-cache/
+.turbo/
+.eslintcache
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Frontend builds and browser tests
+frontend/dist/
+frontend/build/
+playwright-report/
+test-results/
+blob-report/
+coverage/
+
+# Runtime data and local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+celerybeat-schedule*
+*.pid
+pids/
+storage/
+uploads/
+data/
+
+# Logs and diagnostics
+*.log
+logs/
+*.trace
+*.prof
+
+# Generated exports, renders and temporary work files
+output/
+tmp/
+temp/
+.tmp/
+*.tmp
+*.temp
+
+# Archives and backup files
+*.bak
+*.backup
+*.orig
+*.rej
+*.zip
+*.tar
+*.tar.gz
+
+# Docker and local infrastructure volumes
+.docker/
+docker-data/
+postgres-data/
+redis-data/
+minio-data/
+
+# Local AI/tooling state
+.codex/
+.claude/
+.cursor/
