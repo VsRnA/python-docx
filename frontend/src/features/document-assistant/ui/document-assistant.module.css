@@ -109,6 +109,37 @@
 .message { padding: 8px 10px; background: #f0f6ed; border-radius: 6px; }
 .scopeHint { margin: -2px 0 0; }
 
+.contextCard {
+  display: grid;
+  gap: 5px;
+  padding: 9px 10px;
+  background: #f7f9fc;
+  border: 1px solid #dce4ef;
+  border-radius: 7px;
+}
+
+.contextCard strong {
+  color: #313941;
+  font-size: 12px;
+}
+
+.contextCard p {
+  display: -webkit-box;
+  max-height: 58px;
+  margin: 0;
+  overflow: hidden;
+  color: #4c5661;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.contextCard small {
+  color: #747d86;
+  font-size: 11px;
+}
+
 .translationAction {
   display: flex;
   gap: 8px;
@@ -145,6 +176,8 @@
 }
 .review h2 { margin: 0 0 8px; font-size: 15px; }
 .review p { margin: 0 0 8px; padding: 10px; background: #f5f6f7; border-radius: 6px; font-size: 13px; line-height: 1.45; }
+.review .contextCard { margin-bottom: 10px; }
+.review .contextCard p { padding: 0; background: transparent; font-size: 12px; }
 .review small { display: block; color: #69727b; line-height: 1.4; }
 .review > div { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
 .review .primaryButton { color: #fff; background: #2464c5; border-color: #2464c5; }

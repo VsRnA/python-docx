@@ -9,7 +9,7 @@
   @bottom-left { content: counter(page); color: var(--manual-ink); font-size: 11pt; }
   @bottom-right { content: string(manualVersion); color: var(--manual-muted); font-size: 9pt; }
 }
-@page cover {
+@page :first {
   margin: 0;
   @top-center { content: none; }
   @bottom-left { content: none; }
@@ -52,7 +52,7 @@ body { margin: 0; }
   font-size: 0;
   string-set: manualVersion content();
 }
-.manual-cover { page: cover; min-height: 297mm; overflow: hidden; background: #fff; }
+.manual-cover { min-height: 297mm; overflow: hidden; background: #fff; }
 .manual-cover__orange { height: 62mm; padding: 15mm 16mm; color: #fff; background: var(--manual-orange); }
 .manual-cover__brand { margin: 0; font-size: 38pt; font-style: italic; font-weight: 900; letter-spacing: -1.5pt; line-height: 1.1; }
 .manual-cover__kicker { margin: 7mm 0 0; font-size: 10pt; letter-spacing: 2pt; }

@@ -64,6 +64,32 @@ def _html_validator() -> HtmlContractValidator:
     return HtmlContractValidator(set(classes_path.read_text(encoding="utf-8").splitlines()))
 
 
+def _error_detail(code: str, message: str) -> dict[str, str]:
+    return {"code": code, "message": message}
+
+
+def _ai_value_error_code(message: str) -> str:
+    if message.startswith("Selected blocks were not found"):
+        return "selection_not_found"
+    if message == "AI edit changed blocks outside the selected area":
+        return "outside_selected_area"
+    if "change set" in message.lower():
+        return "invalid_change_set"
+    if "contract" in message.lower() or "html" in message.lower():
+        return "validation_failed"
+    return "validation_failed"
+
+
+def _ai_conflict_error_code(message: str) -> str:
+    if message.startswith("Block not found"):
+        return "selection_not_found"
+    if message.startswith("Block changed"):
+        return "block_changed"
+    if "change set" in message.lower():
+        return "invalid_change_set"
+    return "revision_conflict"
+
+
 async def _read_upload_limited(file: UploadFile, max_size_bytes: int) -> bytes:
     chunks: list[bytes] = []
     size = 0
@@ -336,11 +362,25 @@ async def edit_document_with_ai(
             target_block_ids=payload.target_block_ids,
         )
     except LookupError as error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
-    except (RevisionConflictError, ChangeSetConflictError) as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_error_detail("document_not_found", str(error)),
+        ) from error
+    except RevisionConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail("revision_conflict", str(error)),
+        ) from error
+    except ChangeSetConflictError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail(_ai_conflict_error_code(str(error)), str(error)),
+        ) from error
     except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_error_detail(_ai_value_error_code(str(error)), str(error)),
+        ) from error
     return AiEditResponse(revision=revision, summary=summary)
 
 

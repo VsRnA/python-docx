@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 
 import { exportDocumentPdf, getDocument, publishDocument, renameDocument } from '@/entities/document'
+import type { SelectionContext } from '@/entities/document'
 import { DocumentAssistant } from '@/features/document-assistant'
 import { DocumentEditor } from '@/widgets/document-editor'
 
@@ -19,7 +20,14 @@ export function EditorPage() {
   const [notification, setNotification] = useState<string | null>(null)
   const [publishConfirmationOpen, setPublishConfirmationOpen] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([])
+  const [selectionContext, setSelectionContext] = useState<SelectionContext>({
+    scope: 'document',
+    blockIds: [],
+    blocks: [],
+    selectedText: '',
+    textPreview: '',
+    characterCount: 0,
+  })
   const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: ['document', documentId],
@@ -201,7 +209,9 @@ export function EditorPage() {
                 onRevisionChange={viewMode === 'final' ? setRevision : undefined}
                 onSaveStateChange={viewMode === 'final' ? setSaveState : undefined}
                 onSaveError={viewMode === 'final' ? setSaveError : undefined}
-                onSelectionChange={viewMode === 'final' ? setSelectedBlockIds : undefined}
+                selectionBlockIds={[]}
+                highlightBlockIds={[]}
+                onSelectionChange={viewMode === 'final' ? setSelectionContext : undefined}
               />
             )}
           </section>
@@ -210,7 +220,7 @@ export function EditorPage() {
               documentId={document.id}
               revision={revision}
               canMutate={saveState === 'saved'}
-              selectedBlockIds={selectedBlockIds}
+              selectionContext={selectionContext}
               onRevisionChange={setRevision}
               onBusyChange={setAssistantBusy}
               onClose={() => setAssistantOpen(false)}

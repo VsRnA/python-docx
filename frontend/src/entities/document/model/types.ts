@@ -51,3 +51,18 @@ export interface AiMessage {
   revision: number
   created_at: string
 }
+
+export interface SelectionContextBlock {
+  blockId: string
+  blockType: string
+  textPreview: string
+}
+
+export interface SelectionContext {
+  scope: 'selection' | 'current-block' | 'document'
+  blockIds: string[]
+  blocks: SelectionContextBlock[]
+  selectedText: string
+  textPreview: string
+  characterCount: number
+}

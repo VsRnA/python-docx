@@ -9,7 +9,8 @@ import TableHeader from '@tiptap/extension-table-header'
 import TableRow from '@tiptap/extension-table-row'
 import ListItem from '@tiptap/extension-list-item'
 import { Extension, mergeAttributes, Node } from '@tiptap/core'
-import { Plugin } from '@tiptap/pm/state'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
 const classAttribute = (defaultClass: string) => ({
   default: defaultClass,
@@ -58,6 +59,47 @@ export const StableBlockIds = Extension.create({
             changed = true
           })
           return changed ? transaction : null
+        },
+      }),
+    ]
+  },
+})
+
+export const aiBlockDecorationsKey = new PluginKey<DecorationSet>('aiBlockDecorations')
+
+export const AiBlockDecorations = Extension.create({
+  name: 'aiBlockDecorations',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: aiBlockDecorationsKey,
+        state: {
+          init: () => DecorationSet.empty,
+          apply(transaction, previous, _oldState, newState) {
+            const meta = transaction.getMeta(aiBlockDecorationsKey) as
+              | { contextBlockIds?: string[]; highlightBlockIds?: string[] }
+              | undefined
+            if (!meta) return previous.map(transaction.mapping, transaction.doc)
+
+            const contextIds = new Set(meta.contextBlockIds ?? [])
+            const highlightIds = new Set(meta.highlightBlockIds ?? [])
+            const decorations: Decoration[] = []
+            newState.doc.descendants((node, position) => {
+              const blockId = node.attrs.blockId
+              if (!node.isBlock || typeof blockId !== 'string') return
+              const classes = [
+                contextIds.has(blockId) ? 'ai-context-block' : '',
+                highlightIds.has(blockId) ? 'ai-highlight-block' : '',
+              ].filter(Boolean)
+              if (classes.length) decorations.push(Decoration.node(position, position + node.nodeSize, { class: classes.join(' ') }))
+            })
+            return DecorationSet.create(newState.doc, decorations)
+          },
+        },
+        props: {
+          decorations(state) {
+            return aiBlockDecorationsKey.getState(state)
+          },
         },
       }),
     ]

@@ -6,6 +6,7 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import { useEffect, useRef, useState } from 'react'
 
 import { saveDocument } from '@/entities/document'
+import type { SelectionContext, SelectionContextBlock } from '@/entities/document'
 import { ApiError } from '@/shared/api/client'
 import {
   ManualFigure,
@@ -50,6 +51,8 @@ import {
   ManualPage,
   ManualPageBreak,
   StableBlockIds,
+  AiBlockDecorations,
+  aiBlockDecorationsKey,
 } from '../model/extensions'
 import styles from './document-editor.module.css'
 
@@ -62,7 +65,9 @@ interface DocumentEditorProps {
   onRevisionChange?: (revision: number) => void
   onSaveStateChange?: (state: 'saved' | 'changed' | 'saving' | 'error') => void
   onSaveError?: (message: string | null) => void
-  onSelectionChange?: (blockIds: string[]) => void
+  selectionBlockIds?: string[]
+  highlightBlockIds?: string[]
+  onSelectionChange?: (context: SelectionContext) => void
 }
 
 function resolveAssetUrls(html: string, assetUrls: Record<string, string>) {
@@ -138,22 +143,34 @@ function fromEditorPages(html: string, chrome: Pick<EditorDocument, 'header' | '
 }
 
 function restoreAssetReferences(html: string, assetUrls: Record<string, string>) {
-  return Object.entries(assetUrls).reduce(
-    (result, [assetId, url]) => {
-      const reference = `asset://${assetId}`
-      return result
-        .split(url)
-        .join(reference)
-        .split(url.replaceAll('&', '&amp;'))
-        .join(reference)
-    },
-    html,
-  )
+  const container = window.document.createElement('div')
+  container.innerHTML = html
+  const urlToAsset = new Map<string, string>()
+  Object.entries(assetUrls).forEach(([assetId, url]) => {
+    urlToAsset.set(url, assetId)
+    urlToAsset.set(url.replaceAll('&', '&amp;'), assetId)
+    try {
+      urlToAsset.set(new URL(url).href, assetId)
+    } catch {
+      // Keep the literal URL variants above when the browser cannot parse it.
+    }
+  })
+  container.querySelectorAll('img[src]').forEach((image) => {
+    const src = image.getAttribute('src') ?? ''
+    const assetId = urlToAsset.get(src)
+    if (assetId) image.setAttribute('src', `asset://${assetId}`)
+  })
+  return container.innerHTML
 }
 
 function normalizeCanonicalHtml(html: string) {
   const container = window.document.createElement('div')
   container.innerHTML = html
+  container.querySelectorAll('[data-ai-context], [data-ai-highlight]')
+    .forEach((element) => {
+      element.removeAttribute('data-ai-context')
+      element.removeAttribute('data-ai-highlight')
+    })
   // Tiptap adds editor-only table sizing markup. Canonical column widths live in colwidth.
   container.querySelectorAll('colgroup').forEach((element) => element.remove())
   container.querySelectorAll('table[style], tbody[style], tr[style], th[style], td[style]')
@@ -183,14 +200,50 @@ function saveErrorMessage(error: unknown) {
   return `Сервер вернул ошибку ${error.status}`
 }
 
-function selectedBlockIds(editor: NonNullable<ReturnType<typeof useEditor>>) {
+function compactText(text: string, maxLength = 220) {
+  const compacted = text.replace(/\s+/g, ' ').trim()
+  return compacted.length > maxLength ? `${compacted.slice(0, maxLength - 1)}…` : compacted
+}
+
+function selectedContext(editor: NonNullable<ReturnType<typeof useEditor>>): SelectionContext {
   const { doc, selection } = editor.state
-  const ids = new Set<string>()
+  const blocks = new Map<string, SelectionContextBlock>()
   doc.nodesBetween(selection.from, selection.to, (node) => {
     const blockId = node.attrs.blockId
-    if (node.isBlock && typeof blockId === 'string' && blockId) ids.add(blockId)
+    if (node.isBlock && typeof blockId === 'string' && blockId) {
+      blocks.set(blockId, {
+        blockId,
+        blockType: node.type.name,
+        textPreview: compactText(node.textContent),
+      })
+    }
   })
-  return Array.from(ids)
+  if (!blocks.size) {
+    for (let depth = selection.$from.depth; depth >= 0; depth -= 1) {
+      const node = selection.$from.node(depth)
+      const blockId = node.attrs.blockId
+      if (node.isBlock && typeof blockId === 'string' && blockId) {
+        blocks.set(blockId, {
+          blockId,
+          blockType: node.type.name,
+          textPreview: compactText(node.textContent),
+        })
+        break
+      }
+    }
+  }
+  const selectedText = selection.empty ? '' : compactText(doc.textBetween(selection.from, selection.to, ' '))
+  const blockList = Array.from(blocks.values())
+  const fallbackPreview = blockList.map((block) => block.textPreview).filter(Boolean).join(' ')
+  const textPreview = compactText(selectedText || fallbackPreview)
+  return {
+    scope: selection.empty && blockList.length ? 'current-block' : blockList.length ? 'selection' : 'document',
+    blockIds: blockList.map((block) => block.blockId),
+    blocks: blockList,
+    selectedText,
+    textPreview,
+    characterCount: (selectedText || fallbackPreview).length,
+  }
 }
 
 export function DocumentEditor({
@@ -202,6 +255,8 @@ export function DocumentEditor({
   onRevisionChange,
   onSaveStateChange,
   onSaveError,
+  selectionBlockIds = [],
+  highlightBlockIds = [],
   onSelectionChange,
 }: DocumentEditorProps) {
   const [saveState, setSaveState] = useState<'saved' | 'changed' | 'saving' | 'error'>('saved')
@@ -226,6 +281,7 @@ export function DocumentEditor({
         listItem: false,
       }),
       StableBlockIds,
+      AiBlockDecorations,
       ManualParagraph,
       ManualHeading,
       ManualHeader,
@@ -280,7 +336,7 @@ export function DocumentEditor({
       setSaveState('changed')
     },
     onSelectionUpdate: ({ editor: selectedEditor }) => {
-      onSelectionChange?.(selectedBlockIds(selectedEditor))
+      onSelectionChange?.(selectedContext(selectedEditor))
     },
   })
 
@@ -316,8 +372,18 @@ export function DocumentEditor({
 
   useEffect(() => {
     if (!editor) return
-    onSelectionChange?.(selectedBlockIds(editor))
+    onSelectionChange?.(selectedContext(editor))
   }, [editor, onSelectionChange, revision])
+
+  useEffect(() => {
+    if (!editor) return
+    editor.view.dispatch(
+      editor.state.tr.setMeta(aiBlockDecorationsKey, {
+        contextBlockIds: selectionBlockIds,
+        highlightBlockIds,
+      }),
+    )
+  }, [editor, highlightBlockIds, selectionBlockIds])
 
   useEffect(() => {
     if (!editor || saveState !== 'changed') return
