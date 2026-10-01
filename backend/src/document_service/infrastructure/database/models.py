@@ -61,6 +61,26 @@ class AssetModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class DocumentSourceFileModel(Base):
+    __tablename__ = "document_source_files"
+    __table_args__ = (
+        Index("ix_document_source_files_document_position", "document_id", "position"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_document_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    filename: Mapped[str] = mapped_column(String(1000), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(1500), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class JobModel(Base):
     __tablename__ = "jobs"
 

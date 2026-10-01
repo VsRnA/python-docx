@@ -8,6 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from document_service.application.dto.document_commands import CreateDocumentCommand
 from document_service.application.use_cases.create_document import CreateDocument
+from document_service.application.use_cases.create_merged_document import (
+    CreateMergedDocument,
+    CreateMergedDocumentCommand,
+    MergeUpload,
+)
 from document_service.application.use_cases.get_document import GetDocument
 from document_service.application.use_cases.list_documents import ListDocuments
 from document_service.application.use_cases.export_pdf import ExportPdf
@@ -28,6 +33,7 @@ from document_service.infrastructure.config.settings import get_settings
 from document_service.infrastructure.database.repositories import (
     SqlAlchemyAssetRepository,
     SqlAlchemyDocumentRepository,
+    SqlAlchemyDocumentSourceFileRepository,
     SqlAlchemyDocumentVersionRepository,
     SqlAlchemyJobRepository,
     SqlAlchemyPublicationRepository,
@@ -38,6 +44,7 @@ from document_service.infrastructure.renderer.http_pdf_renderer import HttpPdfRe
 from document_service.infrastructure.storage.timeweb_s3 import TimewebS3Storage
 from document_service.presentation.api.v1.schemas.documents import (
     CreateDocumentResponse,
+    CreateMergedDocumentResponse,
     DocumentDetailsResponse,
     DocumentVersionResponse,
     RestoreVersionRequest,
@@ -134,6 +141,55 @@ async def create_document(
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
     return CreateDocumentResponse(document_id=result.document_id, job_id=result.job_id)
+
+
+@router.post("/merge", response_model=CreateMergedDocumentResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_merged_document(
+    title: Annotated[str, Form(min_length=1, max_length=500)],
+    files: Annotated[list[UploadFile], File()],
+    owner_id: Annotated[UUID, Depends(get_current_user_id)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    merge_notes: Annotated[str | None, Form(max_length=2000)] = None,
+) -> CreateMergedDocumentResponse:
+    settings = get_settings()
+    uploads: list[MergeUpload] = []
+    try:
+        for file in files:
+            content = await _read_upload_limited(file, settings.max_docx_size_bytes)
+            uploads.append(
+                MergeUpload(
+                    filename=file.filename or "document.docx",
+                    content_type=file.content_type or "application/octet-stream",
+                    size_bytes=len(content),
+                    content=content,
+                )
+            )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(error)) from error
+    use_case = CreateMergedDocument(
+        SqlAlchemyDocumentRepository(session),
+        SqlAlchemyDocumentSourceFileRepository(session),
+        TimewebS3Storage(settings),
+        CeleryDocumentJobQueue(),
+        SqlAlchemyJobRepository(session),
+        max_size_bytes=settings.max_docx_size_bytes,
+    )
+    try:
+        result = await use_case.execute(
+            CreateMergedDocumentCommand(
+                title=title,
+                owner_id=owner_id,
+                files=uploads,
+                merge_notes=merge_notes,
+            )
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    return CreateMergedDocumentResponse(
+        document_id=result.document_id,
+        job_id=result.job_id,
+        source_count=result.source_count,
+    )
 
 
 @router.get("", response_model=list[DocumentListItem])

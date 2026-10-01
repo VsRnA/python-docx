@@ -37,6 +37,12 @@ export interface CreateDocumentResult {
   job_id: string
 }
 
+export interface CreateMergedDocumentResult {
+  document_id: string
+  job_id: string
+  source_count: number
+}
+
 export interface DocumentVersion {
   revision: number
   reason: string

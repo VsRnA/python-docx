@@ -1,0 +1,60 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 360px;
+}
+
+.modeToggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  padding: 3px;
+  border: 1px solid #d9dde3;
+  border-radius: 8px;
+  background: #f6f7f9;
+}
+
+.modeOption {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-radius: 6px;
+  color: #4f5661;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modeOption[data-active='true'] {
+  color: #202124;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(15 23 42 / 12%);
+}
+
+.modeOption input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.notes {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #d9dde3;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.error {
+  max-width: 360px;
+  margin: 0;
+  color: #a61b1b;
+  font-size: 14px;
+  text-align: right;
+}

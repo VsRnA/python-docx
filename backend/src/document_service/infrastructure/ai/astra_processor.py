@@ -17,6 +17,11 @@ from document_service.application.ports.document_ai_editor import (
     DocumentChangeSet,
 )
 from document_service.application.ports.document_converter import DocumentPdfConverter
+from document_service.application.ports.document_merger import (
+    DocumentMerger,
+    MergeSource,
+    MergedDocumentResult,
+)
 from document_service.application.ports.document_processor import (
     ProcessedAsset,
     ProcessedDocument,
@@ -536,3 +541,304 @@ class OpenAIAstraDocumentProcessor:
                 ),
             )
         raise RuntimeError("GPT Astra 6 failed the response contract after two repair attempts")
+
+
+class OpenAIAstraDocumentMerger(DocumentMerger):
+    def __init__(
+        self,
+        settings: Settings,
+        prompt_root: Path,
+        *,
+        source_pdf_converter: DocumentPdfConverter,
+    ) -> None:
+        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._model = settings.astra_model
+        self._prompts = PromptPackageLoader(prompt_root)
+        self._source_pdf_converter = source_pdf_converter
+        self._style_reference_pdf_path = Path(settings.style_reference_pdf_path)
+        self._style_reference_overview_dir = Path(settings.style_reference_overview_dir)
+        self._max_ai_file_input_bytes = settings.max_ai_file_input_bytes
+
+    async def merge(
+        self,
+        *,
+        document_id: str,
+        sources: list[MergeSource],
+        merge_notes: str | None,
+        prompt_package_version: str,
+        theme_id: str,
+        theme_version: str,
+    ) -> MergedDocumentResult:
+        package = self._prompts.load_merge_document(prompt_package_version)
+        rendered_sources: list[MergeSource] = []
+        source_assets: list[ProcessedAsset] = []
+        for source in sources:
+            rendered_pdf = await self._source_pdf_converter.convert_docx(
+                filename=source.filename,
+                content=source.content,
+            )
+            assets = [
+                ProcessedAsset(
+                    external_id=f"{source.source_file_id}-{asset.external_id}",
+                    filename=asset.filename,
+                    mime_type=asset.mime_type,
+                    base64_data=asset.base64_data,
+                    width=asset.width,
+                    height=asset.height,
+                    alt=f"{asset.alt} ({source.filename})".strip(),
+                    source_pages=asset.source_pages,
+                )
+                for asset in OpenAIAstraDocumentProcessor._extract_docx_assets(
+                    f"{document_id}|{source.source_file_id}",
+                    source.content,
+                )
+            ]
+            source_assets.extend(assets)
+            rendered_sources.append(
+                MergeSource(
+                    source_file_id=source.source_file_id,
+                    filename=source.filename,
+                    content=source.content,
+                    rendered_pdf=rendered_pdf,
+                    position=source.position,
+                    assets=assets,
+                )
+            )
+        style_reference_pdf = self._read_style_reference_pdf()
+        style_overviews = self._read_style_overviews()
+        raw = await asyncio.to_thread(
+            self._request_merge,
+            document_id,
+            rendered_sources,
+            merge_notes,
+            style_reference_pdf,
+            style_overviews,
+            package.system,
+            package.task,
+            package.schema,
+            package.components,
+            package.classes,
+            theme_id,
+            theme_version,
+            source_assets,
+        )
+        payload = AstraFullDocumentResponse.model_validate_json(raw)
+        if payload.document.document_id != document_id:
+            raise RuntimeError("GPT Astra 6 returned another document identifier")
+        if payload.document.theme_id != theme_id or payload.document.theme_version != theme_version:
+            raise RuntimeError("GPT Astra 6 returned an unrequested document theme")
+        return MergedDocumentResult(
+            html=payload.document.html,
+            astra_html=payload.document.html,
+            language=payload.document.language,
+            theme_id=payload.document.theme_id,
+            theme_version=payload.document.theme_version,
+            assets=source_assets + [
+                ProcessedAsset(
+                    external_id=asset.asset_id,
+                    filename=asset.filename,
+                    mime_type=asset.mime_type,
+                    base64_data=asset.data,
+                    width=asset.width,
+                    height=asset.height,
+                    alt=asset.alt,
+                )
+                for asset in payload.document.assets
+            ],
+            warnings=payload.warnings,
+        )
+
+    def _request_merge(
+        self,
+        document_id: str,
+        sources: list[MergeSource],
+        merge_notes: str | None,
+        style_reference_pdf: bytes,
+        style_overviews: list[tuple[str, str, bytes]],
+        system: str,
+        task: str,
+        schema: str,
+        components: str,
+        classes: str,
+        theme_id: str,
+        theme_version: str,
+        source_assets: list[ProcessedAsset],
+    ) -> str:
+        file_inputs: list[tuple[str, bytes]] = []
+        for source in sources:
+            prefix = f"SOURCE_{source.position:02d}"
+            file_inputs.append((f"{prefix}_{source.filename}", source.content))
+            file_inputs.append((f"{prefix}_RENDER.pdf", source.rendered_pdf))
+        file_inputs.append(("STYLE_REFERENCE.pdf", style_reference_pdf))
+        total_file_bytes = sum(len(data) for _, data in file_inputs)
+        if total_file_bytes > self._max_ai_file_input_bytes:
+            raise ValueError(
+                "Combined merge sources, renders and style reference size "
+                f"({total_file_bytes} bytes) exceeds the configured OpenAI file-input limit "
+                f"({self._max_ai_file_input_bytes} bytes)"
+            )
+
+        uploaded_files = []
+        source_manifest = "\n".join(
+            f"{source.position}. {source.filename} (source_file_id={source.source_file_id})"
+            for source in sources
+        )
+        source_asset_manifest = "\n".join(
+            f"{index}. asset://{asset.external_id} ({asset.filename}, {asset.mime_type}, "
+            f"source pages: {', '.join(map(str, asset.source_pages)) or 'unknown'})"
+            for index, asset in enumerate(source_assets, start=1)
+        )
+        reference_digest = sha256(style_reference_pdf).hexdigest()[:16]
+        prompt = (
+            f"{task}\n\nDocument id: {document_id}. Theme: {theme_id}@{theme_version}.\n"
+            f"Style reference version: sha256:{reference_digest}.\n"
+            "The user does not choose a merge strategy. GPT Astra 6 must decide the clean "
+            "final structure and produce a ready-to-render manual PDF layout through the "
+            "approved HTML contract.\n"
+            f"User merge notes: {merge_notes or '(none)'}\n\n"
+            "Source files in user-provided order:\n"
+            f"{source_manifest}\n\n"
+            "Input roles are strict: SOURCE files and SOURCE_RENDER PDFs contain source content. "
+            "STYLE_REFERENCE.pdf and STYLE_OVERVIEW images contain visual guidance only. Never "
+            "copy text, facts, product names, images or page numbers from the style reference.\n"
+            "Use source image assets directly with their asset:// ids. Do not copy source images "
+            "into the JSON assets array; that array is only for newly generated or flattened "
+            "replacement images.\n"
+            "Source image manifest:\n"
+            f"{source_asset_manifest or '(no supported embedded images)'}\n\n"
+            f"Approved component templates:\n{components}\n\n"
+            f"Approved CSS classes (one per line):\n{classes}\n\n"
+            f"Return JSON matching this schema exactly:\n{schema}"
+        )
+        try:
+            for upload_filename, upload_content in file_inputs:
+                uploaded_files.append(
+                    self._client.files.create(
+                        file=(upload_filename, upload_content),
+                        purpose="user_data",
+                    )
+                )
+
+            input_content: list[dict[str, object]] = []
+            uploaded_index = 0
+            for source in sources:
+                input_content.extend(
+                    [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                f"SOURCE_{source.position:02d} DOCX: authoritative source "
+                                f"content for {source.filename}."
+                            ),
+                        },
+                        {"type": "input_file", "file_id": uploaded_files[uploaded_index].id},
+                    ]
+                )
+                uploaded_index += 1
+                input_content.extend(
+                    [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                f"SOURCE_{source.position:02d}_RENDER.pdf: authoritative visual "
+                                f"rendering of {source.filename}."
+                            ),
+                        },
+                        {
+                            "type": "input_file",
+                            "file_id": uploaded_files[uploaded_index].id,
+                            "detail": "high",
+                        },
+                    ]
+                )
+                uploaded_index += 1
+            input_content.extend(
+                [
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "STYLE_REFERENCE.pdf: visual style only. Never reuse its text, "
+                            "facts, product names, images or page numbers."
+                        ),
+                    },
+                    {
+                        "type": "input_file",
+                        "file_id": uploaded_files[uploaded_index].id,
+                        "detail": "high",
+                    },
+                ]
+            )
+            for overview_filename, overview_mime_type, overview_content in style_overviews:
+                input_content.extend(
+                    [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                f"STYLE_OVERVIEW {overview_filename}: page-system overview only; "
+                                "never treat visible words or illustrations as source content."
+                            ),
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": (
+                                f"data:{overview_mime_type};base64,"
+                                f"{base64.b64encode(overview_content).decode('ascii')}"
+                            ),
+                            "detail": "high",
+                        },
+                    ]
+                )
+            input_content.append({"type": "input_text", "text": prompt})
+            for asset in source_assets:
+                input_content.extend(
+                    [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                f"Source image asset://{asset.external_id} ({asset.filename}); "
+                                f"DOCX pages: {', '.join(map(str, asset.source_pages)) or 'unknown'}"
+                            ),
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": (
+                                f"data:{asset.mime_type};base64,{asset.base64_data}"
+                            ),
+                            "detail": "high",
+                        },
+                    ]
+                )
+            response = self._client.responses.create(
+                model=self._model,
+                instructions=system,
+                input=[
+                    {
+                        "role": "user",
+                        "content": input_content,
+                    }
+                ],
+            )
+            validator = HtmlContractValidator(set(classes.splitlines()))
+            return OpenAIAstraDocumentProcessor._repair_until_valid(
+                self,
+                response,
+                schema,
+                AstraFullDocumentResponse,
+                html_validator=lambda payload: OpenAIAstraDocumentProcessor._validate_full_document_html(
+                    payload.document.html,
+                    validator,
+                    source_assets,
+                ),
+            )
+        finally:
+            for uploaded in uploaded_files:
+                try:
+                    self._client.files.delete(uploaded.id)
+                except Exception:
+                    pass
+
+    def _read_style_reference_pdf(self) -> bytes:
+        return OpenAIAstraDocumentProcessor._read_style_reference_pdf(self)
+
+    def _read_style_overviews(self) -> list[tuple[str, str, bytes]]:
+        return OpenAIAstraDocumentProcessor._read_style_overviews(self)

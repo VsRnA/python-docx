@@ -1,6 +1,13 @@
 import { apiRequest } from '@/shared/api/client'
 
-import type { AiMessage, CreateDocumentResult, DocumentDetails, DocumentListItem, DocumentVersion } from '../model/types'
+import type {
+  AiMessage,
+  CreateDocumentResult,
+  CreateMergedDocumentResult,
+  DocumentDetails,
+  DocumentListItem,
+  DocumentVersion,
+} from '../model/types'
 
 export function getDocuments() {
   return apiRequest<DocumentListItem[]>('/documents')
@@ -15,6 +22,14 @@ export function createDocument(title: string, file: File) {
   body.set('title', title)
   body.set('file', file)
   return apiRequest<CreateDocumentResult>('/documents', { method: 'POST', body })
+}
+
+export function createMergedDocument(title: string, files: File[], mergeNotes?: string) {
+  const body = new FormData()
+  body.set('title', title)
+  files.forEach((file) => body.append('files', file))
+  if (mergeNotes?.trim()) body.set('merge_notes', mergeNotes.trim())
+  return apiRequest<CreateMergedDocumentResult>('/documents/merge', { method: 'POST', body })
 }
 
 export function saveDocument(id: string, baseRevision: number, html: string) {

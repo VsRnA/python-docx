@@ -11,6 +11,12 @@ class CreateDocumentResponse(BaseModel):
     job_id: str
 
 
+class CreateMergedDocumentResponse(BaseModel):
+    document_id: UUID
+    job_id: str
+    source_count: int
+
+
 class DocumentListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

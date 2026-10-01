@@ -12,3 +12,12 @@ class CeleryDocumentJobQueue:
             task_id=str(job_id),
         )
         return str(result.id)
+
+    async def enqueue_merge_processing(self, document_id: UUID, job_id: UUID) -> str:
+        result = celery_app.send_task(
+            "document_service.process_document_merge",
+            kwargs={"document_id": str(document_id), "job_id": str(job_id)},
+            queue="documents",
+            task_id=str(job_id),
+        )
+        return str(result.id)

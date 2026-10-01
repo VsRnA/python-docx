@@ -53,3 +53,21 @@ class PromptPackageLoader:
             classes=classes,
             digest=digest,
         )
+
+    def load_merge_document(self, version: str) -> PromptPackage:
+        directory = self._root / version
+        system = (directory / "system.md").read_text(encoding="utf-8")
+        task = (directory / "task-merge-document.md").read_text(encoding="utf-8")
+        schema = (directory / "response.schema.json").read_text(encoding="utf-8")
+        components = (directory / "components.html").read_text(encoding="utf-8")
+        classes = (directory / "classes.txt").read_text(encoding="utf-8")
+        digest = sha256((system + task + schema + components + classes).encode()).hexdigest()
+        return PromptPackage(
+            version=version,
+            system=system,
+            task=task,
+            schema=schema,
+            components=components,
+            classes=classes,
+            digest=digest,
+        )

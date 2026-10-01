@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from document_service.domain.entities.asset import Asset
 from document_service.domain.entities.document import Document
+from document_service.domain.entities.document_source_file import DocumentSourceFile
 from document_service.domain.entities.document_version import DocumentVersion
 from document_service.domain.entities.job import Job
 from document_service.domain.entities.publication import Publication
@@ -15,6 +16,7 @@ from document_service.infrastructure.database.models import (
     JobModel,
     PublicationModel,
     AiMessageModel,
+    DocumentSourceFileModel,
 )
 
 
@@ -216,6 +218,53 @@ class SqlAlchemyAssetRepository:
             alt=model.alt,
             created_at=model.created_at,
         )
+
+
+class SqlAlchemyDocumentSourceFileRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_many(self, source_files: list[DocumentSourceFile]) -> None:
+        self._session.add_all(
+            [
+                DocumentSourceFileModel(
+                    id=source.id,
+                    document_id=source.document_id,
+                    source_document_id=source.source_document_id,
+                    filename=source.filename,
+                    object_key=source.object_key,
+                    size_bytes=source.size_bytes,
+                    sha256=source.sha256,
+                    position=source.position,
+                    role=source.role,
+                    created_at=source.created_at,
+                )
+                for source in source_files
+            ]
+        )
+        await self._session.commit()
+
+    async def list_by_document(self, document_id) -> list[DocumentSourceFile]:
+        result = await self._session.execute(
+            select(DocumentSourceFileModel)
+            .where(DocumentSourceFileModel.document_id == document_id)
+            .order_by(DocumentSourceFileModel.position.asc())
+        )
+        return [
+            DocumentSourceFile(
+                id=model.id,
+                document_id=model.document_id,
+                source_document_id=model.source_document_id,
+                filename=model.filename,
+                object_key=model.object_key,
+                size_bytes=model.size_bytes,
+                sha256=model.sha256,
+                position=model.position,
+                role=model.role,
+                created_at=model.created_at,
+            )
+            for model in result.scalars()
+        ]
 
 
 class SqlAlchemyJobRepository:
