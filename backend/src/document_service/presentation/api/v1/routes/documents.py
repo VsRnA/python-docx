@@ -15,6 +15,7 @@ from document_service.application.use_cases.create_merged_document import (
 )
 from document_service.application.use_cases.get_document import GetDocument
 from document_service.application.use_cases.list_documents import ListDocuments
+from document_service.application.use_cases.export_html_preview import ExportHtmlPreview
 from document_service.application.use_cases.export_pdf import ExportPdf
 from document_service.application.services.html_contract import HtmlContractValidator
 from document_service.application.use_cases.save_document import RevisionConflictError, SaveDocument
@@ -55,6 +56,7 @@ from document_service.presentation.api.v1.schemas.documents import (
     PublishDocumentResponse,
     PublicationListItem,
     DocumentListItem,
+    ExportHtmlPreviewResponse,
     ExportPdfResponse,
     SaveDocumentRequest,
     SaveDocumentResponse,
@@ -310,6 +312,32 @@ async def export_pdf(
     expires_in = 900
     url = await storage.presign_get(key=key, expires_seconds=expires_in)
     return ExportPdfResponse(url=url, expires_in=expires_in)
+
+
+@router.post("/{document_id}/previews/html", response_model=ExportHtmlPreviewResponse)
+async def export_html_preview(
+    document_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    owner_id: Annotated[UUID, Depends(get_current_user_id)],
+) -> ExportHtmlPreviewResponse:
+    settings = get_settings()
+    storage = TimewebS3Storage(settings)
+    use_case = ExportHtmlPreview(
+        SqlAlchemyDocumentRepository(session),
+        SqlAlchemyDocumentVersionRepository(session),
+        storage,
+        HttpPdfRenderer(settings.renderer_url),
+        SqlAlchemyAssetRepository(session),
+    )
+    try:
+        key = await use_case.execute(document_id=document_id, owner_id=owner_id)
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+    expires_in = 900
+    url = await storage.presign_get(key=key, expires_seconds=expires_in)
+    return ExportHtmlPreviewResponse(url=url, expires_in=expires_in)
 
 
 @router.get("/{document_id}/versions", response_model=list[DocumentVersionResponse])

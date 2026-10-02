@@ -11,8 +11,22 @@ import {
 } from '@/entities/document'
 import type { SelectionContext } from '@/entities/document'
 import { ApiError } from '@/shared/api/client'
+import { cn } from '@/shared/lib/cn'
 
-import styles from './document-assistant.module.css'
+const tabClass = cn(
+  'min-w-8 cursor-pointer rounded-[5px] border-0 bg-transparent px-2.5 text-app-muted',
+  'aria-selected:bg-[#edf2f8] aria-selected:font-semibold aria-selected:text-[#1f252b]',
+)
+
+const primaryButtonClass = cn(
+  'min-h-9 cursor-pointer rounded-[7px] border border-app-accent bg-app-accent px-3 font-semibold text-white',
+  'hover:bg-[#1d55aa] disabled:cursor-default disabled:opacity-50',
+)
+
+const secondaryButtonClass = 'min-h-8 cursor-pointer rounded-control border border-[#bbc2ca] bg-white px-2.5 disabled:cursor-default disabled:opacity-50'
+
+const contextCardClass = 'grid gap-[5px] rounded-[7px] border border-[#dce4ef] bg-[#f7f9fc] px-2.5 py-[9px]'
+const contextTextClass = 'm-0 line-clamp-3 max-h-[58px] overflow-hidden text-xs leading-[1.45] text-[#4c5661]'
 
 interface DocumentAssistantProps {
   documentId: string
@@ -163,67 +177,77 @@ export function DocumentAssistant({
   const busy = aiEdit.isPending || translation.isPending || restore.isPending
   useEffect(() => onBusyChange?.(busy), [busy, onBusyChange])
   return (
-    <aside className={styles.panel} aria-label="Помощник по документу">
-      <header className={styles.panelHeader}>
-        <div className={styles.tabs} role="tablist" aria-label="Панель документа">
-          <button type="button" role="tab" aria-selected={activeTab === 'ai'} onClick={() => setActiveTab('ai')}>AI</button>
-          <button type="button" role="tab" aria-selected={activeTab === 'versions'} onClick={() => setActiveTab('versions')}>Версии</button>
+    <aside
+      className="sticky top-16 grid h-[calc(100vh-64px)] w-[360px] grid-rows-[48px_minmax(0,1fr)] overflow-hidden border-l border-[#d6dae0] bg-white max-[1279px]:h-[calc(100vh-64px)] max-[1279px]:w-[min(400px,calc(100vw-80px))]"
+      aria-label="Помощник по документу"
+    >
+      <header className="flex items-center justify-between gap-2 border-b border-[#e0e3e7] py-[7px] pl-3.5 pr-2.5">
+        <div className="flex h-[34px] gap-0.5" role="tablist" aria-label="Панель документа">
+          <button className={tabClass} type="button" role="tab" aria-selected={activeTab === 'ai'} onClick={() => setActiveTab('ai')}>AI</button>
+          <button className={tabClass} type="button" role="tab" aria-selected={activeTab === 'versions'} onClick={() => setActiveTab('versions')}>Версии</button>
         </div>
-        <button className={styles.closeButton} type="button" aria-label="Закрыть панель" title="Закрыть панель" onClick={onClose}>×</button>
+        <button className="min-w-8 cursor-pointer rounded-[5px] border-0 bg-transparent p-0 text-[21px] text-app-muted hover:bg-[#f0f2f4]" type="button" aria-label="Закрыть панель" title="Закрыть панель" onClick={onClose}>×</button>
       </header>
 
       {activeTab === 'ai' ? (
-        <div className={styles.tabContent} role="tabpanel">
-          <div className={styles.conversation} aria-live="polite">
+        <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]" role="tabpanel">
+          <div className="grid min-h-0 content-start gap-2.5 overflow-auto p-4" aria-live="polite">
             {conversation.data?.length ? conversation.data.map((item) => (
-              <article className={styles[item.role]} key={item.id}>
-                <span>{item.role === 'user' ? 'Вы' : 'AI'}</span>
-                <p>{item.content}</p>
+              <article
+                className={cn(
+                  'rounded-[7px] px-3 py-2.5',
+                  item.role === 'user' ? 'ml-8 bg-[#eaf2ff]' : 'mr-8 bg-[#f0f2f4]',
+                )}
+                key={item.id}
+              >
+                <span className="text-[10px] font-bold uppercase text-[#69727c]">{item.role === 'user' ? 'Вы' : 'AI'}</span>
+                <p className="m-0 mt-1 whitespace-pre-wrap text-[13px] leading-[1.45]">{item.content}</p>
               </article>
             )) : (
-              <div className={styles.emptyState}>
-                <h2>Помощник по документу</h2>
-                <p>Опишите результат, который хотите получить. Перед изменением документа вы сможете проверить команду.</p>
+              <div className="px-2.5 py-6 text-center">
+                <h2 className="m-0 mb-2 text-base font-bold">Помощник по документу</h2>
+                <p className="m-0 text-[13px] leading-normal text-app-muted">Опишите результат, который хотите получить. Перед изменением документа вы сможете проверить команду.</p>
               </div>
             )}
           </div>
-          <div className={styles.composer}>
+          <div className="border-t border-[#e0e3e7] bg-white p-3.5">
             {reviewingInstruction ? (
-              <section className={styles.review} aria-labelledby="ai-review-title">
-                <span>
+              <section aria-labelledby="ai-review-title">
+                <span className="mb-2 inline-flex rounded px-[7px] py-1 text-[11px] text-[#48515a] bg-[#edf0f3]">
                   Область: {contextTitle(selectionContext)}
                 </span>
-                <h2 id="ai-review-title">Проверьте команду</h2>
-                <div className={styles.contextCard}>
-                  <strong>{contextTitle(selectionContext)}</strong>
-                  <p>{selectionContext.textPreview || 'Контекст не выбран. Команда будет применена ко всему документу.'}</p>
-                  <small>
+                <h2 className="m-0 mb-2 text-[15px] font-bold" id="ai-review-title">Проверьте команду</h2>
+                <div className={cn(contextCardClass, 'mb-2.5')}>
+                  <strong className="text-xs text-[#313941]">{contextTitle(selectionContext)}</strong>
+                  <p className={contextTextClass}>{selectionContext.textPreview || 'Контекст не выбран. Команда будет применена ко всему документу.'}</p>
+                  <small className="text-[11px] text-[#747d86]">
                     {selectionContext.blockIds.length
                       ? `${selectionContext.blockIds.length} блок(ов), ${selectionContext.characterCount} символов`
                       : 'Без выделения'}
                   </small>
                 </div>
-                <p>{instruction}</p>
-                <small>
+                <p className="m-0 mb-2 rounded-control bg-[#f5f6f7] p-2.5 text-[13px] leading-[1.45]">{instruction}</p>
+                <small className="block leading-normal text-[#69727b]">
                   После подтверждения AI изменит текущую версию
                   {selectionContext.blockIds.length ? ' только в выбранной области' : ''}.
                   Результат можно будет отменить через историю версий.
                 </small>
-                <div>
-                  <button type="button" disabled={aiEdit.isPending} onClick={() => setReviewingInstruction(false)}>Изменить</button>
-                  <button className={styles.primaryButton} type="button" disabled={!canMutate || aiEdit.isPending} onClick={() => aiEdit.mutate()}>
+                <div className="mt-3.5 flex justify-end gap-2">
+                  <button className={secondaryButtonClass} type="button" disabled={aiEdit.isPending} onClick={() => setReviewingInstruction(false)}>Изменить</button>
+                  <button className={primaryButtonClass} type="button" disabled={!canMutate || aiEdit.isPending} onClick={() => aiEdit.mutate()}>
                     {aiEdit.isPending ? 'Применение…' : 'Подтвердить правку'}
                   </button>
                 </div>
               </section>
             ) : (
-              <form onSubmit={submit}>
-                <div className={styles.quickActions} aria-label="Быстрые команды">
+              <form className="grid gap-2.5" onSubmit={submit}>
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5" aria-label="Быстрые команды">
                   {['Сократить текст', 'Исправить стиль', 'Упростить формулировки'].map((prompt) => (
-                    <button key={prompt} type="button" onClick={() => setInstruction(prompt)}>{prompt}</button>
+                    <button className="min-h-7 flex-none cursor-pointer rounded-control border border-[#e0e3e7] bg-[#f4f5f6] px-[9px] text-[11px] text-[#505962]" key={prompt} type="button" onClick={() => setInstruction(prompt)}>{prompt}</button>
                   ))}
                 </div>
                 <textarea
+                  className="min-h-[92px] resize-y rounded-[7px] border border-[#bbc2ca] px-[11px] py-2.5 leading-normal focus:border-[#3470c5] focus:outline focus:outline-[3px] focus:outline-[#3470c5]/15"
                   aria-label="Команда для AI"
                   value={instruction}
                   onChange={(event) => setInstruction(event.target.value)}
@@ -236,31 +260,31 @@ export function DocumentAssistant({
                   placeholder="Напишите, что нужно изменить"
                   rows={4}
                 />
-                <div className={styles.contextCard}>
-                  <strong>{contextTitle(selectionContext)}</strong>
-                  <p>{selectionContext.textPreview || 'Выделите текст в документе, чтобы отправить AI конкретный фрагмент.'}</p>
-                  <small>
+                <div className={contextCardClass}>
+                  <strong className="text-xs text-[#313941]">{contextTitle(selectionContext)}</strong>
+                  <p className={contextTextClass}>{selectionContext.textPreview || 'Выделите текст в документе, чтобы отправить AI конкретный фрагмент.'}</p>
+                  <small className="text-[11px] text-[#747d86]">
                     {selectionContext.blockIds.length
                       ? `${selectionContext.blockIds.length} блок(ов), ${selectionContext.characterCount} символов`
                       : 'Сейчас команда применится ко всему документу'}
                   </small>
                 </div>
-                <p className={styles.scopeHint}>
+                <p className="m-0 mt-[-2px] text-xs leading-normal text-app-muted">
                   {selectionContext.blockIds.length
                     ? 'AI применит команду к показанному выше контексту.'
                     : 'Без выделения команда применяется ко всему документу.'}
                 </p>
-                <button className={styles.primaryButton} type="submit" disabled={!canMutate || busy || !instruction.trim()}>
+                <button className={primaryButtonClass} type="submit" disabled={!canMutate || busy || !instruction.trim()}>
                   Сформировать правку
                 </button>
               </form>
             )}
-            {!canMutate && <p className={styles.hint}>Команда станет доступна после сохранения документа.</p>}
-            {message && <p className={styles.message}>{message}</p>}
+            {!canMutate && <p className="m-0 mt-[9px] text-xs leading-normal text-app-muted">Команда станет доступна после сохранения документа.</p>}
+            {message && <p className="m-0 mt-[9px] rounded-control bg-[#f0f6ed] px-2.5 py-2 text-xs leading-normal text-app-muted">{message}</p>}
             {!reviewingInstruction && (
-              <div className={styles.translationAction}>
-                <span><strong>Перевод</strong><small>Создаст новую версию документа</small></span>
-                <button type="button" disabled={!canMutate || busy} onClick={() => translation.mutate()}>
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#e5e7ea] pt-3">
+                <span className="grid gap-0.5 text-xs"><strong>Перевод</strong><small className="text-[#747d86]">Создаст новую версию документа</small></span>
+                <button className={secondaryButtonClass} type="button" disabled={!canMutate || busy} onClick={() => translation.mutate()}>
                   {translation.isPending ? 'Перевод…' : 'На русский'}
                 </button>
               </div>
@@ -268,23 +292,27 @@ export function DocumentAssistant({
           </div>
         </div>
       ) : (
-        <section className={styles.versionsPanel} role="tabpanel">
-          <div className={styles.versionsHeading}>
-            <h2>История версий</h2>
-            <p>Восстановление создаст новую версию и сохранит историю.</p>
+        <section className="min-h-0 overflow-auto px-4 pb-5" role="tabpanel">
+          <div className="sticky top-0 z-20 bg-white pb-3 pt-[18px]">
+            <h2 className="m-0 mb-[5px] text-[15px] font-bold">История версий</h2>
+            <p className="m-0 text-xs leading-normal text-[#6c747d]">Восстановление создаст новую версию и сохранит историю.</p>
           </div>
-          <ol className={styles.versions}>
+          <ol className="m-0 grid list-none gap-0 p-0">
             {versions.data?.map((version) => (
-              <li key={version.revision} data-current={version.revision === revision}>
-                <div>
-                  <strong>Версия {version.revision}</strong>
-                  <span>{version.reason}</span>
-                  <time>{new Date(version.created_at).toLocaleString('ru')}</time>
+              <li
+                className="flex items-center justify-between gap-2.5 border-b border-[#e8eaed] py-[13px] data-[current=true]:bg-[#f4f7fb] data-[current=true]:px-[9px]"
+                key={version.revision}
+                data-current={version.revision === revision}
+              >
+                <div className="grid min-w-0 gap-0.5">
+                  <strong className="text-[13px]">Версия {version.revision}</strong>
+                  <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-[#747d86]">{version.reason}</span>
+                  <time className="overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-[#747d86]">{new Date(version.created_at).toLocaleString('ru')}</time>
                 </div>
                 {version.revision === revision ? (
-                  <em>Текущая</em>
+                  <em className="text-[11px] font-semibold not-italic text-[#28643b]">Текущая</em>
                 ) : (
-                  <button type="button" disabled={!canMutate || busy} onClick={() => restore.mutate(version.revision)}>
+                  <button className={secondaryButtonClass} type="button" disabled={!canMutate || busy} onClick={() => restore.mutate(version.revision)}>
                     Восстановить
                   </button>
                 )}

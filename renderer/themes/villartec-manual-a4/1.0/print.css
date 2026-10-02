@@ -104,7 +104,8 @@ body { margin: 0; }
 .manual-table td { padding: 2.3mm 2.5mm; border-bottom: 1px solid var(--manual-rule); vertical-align: top; overflow-wrap: break-word; }
 .manual-table--specification td:first-child { width: 38%; background: #f1f1f1; font-weight: 600; }
 .manual-table--maintenance { font-size: 8pt; line-height: 1.18; }
-.manual-table--maintenance th:nth-child(n+3) { color: #111; background: var(--manual-orange); }
+.manual-table--maintenance thead tr:first-child th[colspan], .manual-table--maintenance thead tr:first-child th:nth-child(3), .manual-table--maintenance tr:first-child th[colspan], .manual-table--maintenance tr:first-child th:nth-child(3) { color: #111; background: var(--manual-orange); }
+.manual-table--maintenance thead tr:nth-child(2) th:nth-child(n+3), .manual-table--maintenance tr:nth-child(2) th:nth-child(n+3) { color: #111; background: var(--manual-orange); }
 .manual-table--maintenance td:nth-child(n+3) { text-align: center; }
 .manual-table--troubleshooting { font-size: 9.2pt; }
 .manual-figure { margin: 4mm auto 5mm; break-inside: avoid; text-align: center; }
@@ -135,3 +136,54 @@ body { margin: 0; }
 .manual-form { margin: 3mm 0 5mm; }
 .manual-field { margin: 0 0 4mm; padding-bottom: 1.5mm; border-bottom: 1px solid #aaa; font-size: 10pt; }
 .manual-page-break { display: none; }
+
+@media screen {
+  body {
+    min-height: 100vh;
+    padding: 14mm 0;
+    background: #dfe3e8;
+  }
+
+  .manual {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0 auto 14mm;
+    padding: 24mm 13mm 18mm;
+    background: #fff;
+    box-shadow: 0 4px 22px rgb(16 24 40 / 16%);
+  }
+
+  .manual-header {
+    position: relative;
+    top: auto;
+    right: auto;
+    left: auto;
+    width: auto;
+    margin: -17mm 0 9mm;
+  }
+
+  .manual-footer {
+    display: flex;
+    height: auto;
+    margin: 10mm 0 -9mm;
+    overflow: visible;
+    justify-content: space-between;
+    color: var(--manual-muted);
+    font-size: 9pt;
+  }
+
+  .manual-footer__page {
+    color: var(--manual-ink);
+  }
+
+  .manual-cover {
+    margin: -24mm -13mm -18mm;
+  }
+
+  .manual-page-break {
+    display: block;
+    height: 14mm;
+    margin: 14mm -13mm;
+    background: #dfe3e8;
+  }
+}

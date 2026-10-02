@@ -8,6 +8,14 @@ import { useEffect, useRef, useState } from 'react'
 import { saveDocument } from '@/entities/document'
 import type { SelectionContext, SelectionContextBlock } from '@/entities/document'
 import { ApiError } from '@/shared/api/client'
+import { cn } from '@/shared/lib/cn'
+import {
+  documentShell,
+  normalizeCanonicalHtml,
+  resolveAssetUrls,
+  restoreAssetReferences,
+  toEditableDocument,
+} from '../model/canonical-html'
 import {
   ManualFigure,
   ManualCaption,
@@ -48,13 +56,18 @@ import {
   ManualTocPage,
   ManualTocRow,
   ManualTocTitle,
-  ManualPage,
   ManualPageBreak,
   StableBlockIds,
   AiBlockDecorations,
   aiBlockDecorationsKey,
 } from '../model/extensions'
-import styles from './document-editor.module.css'
+
+const toolGroupClass = 'relative flex min-h-8 items-center gap-0.5 border-r border-[#dfe2e6] px-2 first:pl-0 last:border-r-0 last:pr-0'
+const toolButtonClass = cn(
+  'h-8 w-8 cursor-pointer rounded-[5px] border border-transparent bg-transparent p-0 text-[15px] text-[#30363d]',
+  'hover:bg-[#f1f3f4] aria-pressed:border-[#c7d9f3] aria-pressed:bg-[#e5eefb] aria-pressed:text-[#174f9e]',
+  'disabled:cursor-default disabled:opacity-45',
+)
 
 interface DocumentEditorProps {
   documentId: string
@@ -68,127 +81,6 @@ interface DocumentEditorProps {
   selectionBlockIds?: string[]
   highlightBlockIds?: string[]
   onSelectionChange?: (context: SelectionContext) => void
-}
-
-function resolveAssetUrls(html: string, assetUrls: Record<string, string>) {
-  return html.replace(/asset:\/\/([0-9a-f-]{36})/gi, (reference, assetId: string) => assetUrls[assetId] ?? reference)
-}
-
-function documentShell(html: string) {
-  const match = html.match(/^\s*(<article\b[^>]*>)([\s\S]*)(<\/article>)\s*$/i)
-  return match
-    ? { opening: match[1], content: match[2], closing: match[3] }
-    : { opening: '<article class="manual">', content: html, closing: '</article>' }
-}
-
-interface EditorDocument {
-  content: string
-  header: string
-  footer: string
-}
-
-function toEditorPages(html: string): EditorDocument {
-  const container = window.document.createElement('div')
-  container.innerHTML = html
-  const headerElement = container.querySelector(':scope > .manual-header')
-  const footerElement = container.querySelector(':scope > .manual-footer')
-  const header = headerElement?.outerHTML ?? ''
-  const footer = footerElement?.outerHTML ?? ''
-  headerElement?.remove()
-  footerElement?.remove()
-
-  const pages: string[][] = [[]]
-  for (const child of Array.from(container.children)) {
-    if (child.classList.contains('manual-page-break')) {
-      pages.push([])
-    } else {
-      pages.at(-1)?.push(child.outerHTML)
-    }
-  }
-
-  return {
-    header,
-    footer,
-    content: pages
-      .filter((page, index) => page.length > 0 || index === 0)
-      .map((page, index) => {
-        const repeatedHeader = index === 0 && page.some((item) => item.includes('manual-cover'))
-          ? ''
-          : header
-        const numberedFooter = repeatedHeader === '' && index === 0
-          ? ''
-          : footer.replace(
-          /(<span\b[^>]*class="[^"]*manual-footer__page[^"]*"[^>]*>)[\s\S]*?(<\/span>)/i,
-          `$1${index + 1}$2`,
-          )
-        return `<section class="manual-page" data-page-number="${index + 1}">${repeatedHeader}${page.join('')}${numberedFooter}</section>`
-      })
-      .join(''),
-  }
-}
-
-function fromEditorPages(html: string, chrome: Pick<EditorDocument, 'header' | 'footer'>) {
-  const container = window.document.createElement('div')
-  container.innerHTML = html
-  const pages = Array.from(container.querySelectorAll(':scope > .manual-page'))
-  const content = pages.map((page) => {
-    page.querySelectorAll(':scope > .manual-header, :scope > .manual-footer').forEach((node) => node.remove())
-    return page.innerHTML
-  })
-  return `${chrome.header}${chrome.footer}${content
-    .map((page, index) => index === 0
-      ? page
-      : `<div class="manual-page-break" data-block-id="b_page_${String(index + 1).padStart(3, '0')}" data-block-type="page-break"></div>${page}`)
-    .join('')}`
-}
-
-function restoreAssetReferences(html: string, assetUrls: Record<string, string>) {
-  const container = window.document.createElement('div')
-  container.innerHTML = html
-  const urlToAsset = new Map<string, string>()
-  Object.entries(assetUrls).forEach(([assetId, url]) => {
-    urlToAsset.set(url, assetId)
-    urlToAsset.set(url.replaceAll('&', '&amp;'), assetId)
-    try {
-      urlToAsset.set(new URL(url).href, assetId)
-    } catch {
-      // Keep the literal URL variants above when the browser cannot parse it.
-    }
-  })
-  container.querySelectorAll('img[src]').forEach((image) => {
-    const src = image.getAttribute('src') ?? ''
-    const assetId = urlToAsset.get(src)
-    if (assetId) image.setAttribute('src', `asset://${assetId}`)
-  })
-  return container.innerHTML
-}
-
-function normalizeCanonicalHtml(html: string) {
-  const container = window.document.createElement('div')
-  container.innerHTML = html
-  container.querySelectorAll('[data-ai-context], [data-ai-highlight]')
-    .forEach((element) => {
-      element.removeAttribute('data-ai-context')
-      element.removeAttribute('data-ai-highlight')
-    })
-  // Tiptap adds editor-only table sizing markup. Canonical column widths live in colwidth.
-  container.querySelectorAll('colgroup').forEach((element) => element.remove())
-  container.querySelectorAll('table[style], tbody[style], tr[style], th[style], td[style]')
-    .forEach((element) => element.removeAttribute('style'))
-  const selector = [
-    'p', 'h1', 'h2', 'h3', 'h4', 'section', 'div.manual-page-break',
-    'ul', 'ol', 'li', 'table', 'tr', 'th', 'td', 'figure', 'figcaption',
-  ].join(',')
-  container.querySelectorAll(selector).forEach((element) => {
-    if (element.closest('header.manual-header, footer.manual-footer')) return
-    if (!element.hasAttribute('data-block-id')) {
-      element.setAttribute('data-block-id', `b_${crypto.randomUUID()}`)
-    }
-    if (!element.hasAttribute('data-block-type')) {
-      element.setAttribute('data-block-type', element.tagName.toLowerCase())
-    }
-  })
-  return container.innerHTML
 }
 
 function saveErrorMessage(error: unknown) {
@@ -265,7 +157,7 @@ export function DocumentEditor({
   const revisionRef = useRef(revision)
   const shellRef = useRef(documentShell(html))
   const editorDocumentRef = useRef(
-    toEditorPages(resolveAssetUrls(shellRef.current.content, assetUrls)),
+    toEditableDocument(resolveAssetUrls(shellRef.current.content, assetUrls)),
   )
   const changeSequenceRef = useRef(0)
   const savedSequenceRef = useRef(0)
@@ -302,7 +194,6 @@ export function DocumentEditor({
       ManualLegend,
       ManualLegendItem,
       ManualLegendLabel,
-      ManualPage,
       ManualPageBreak,
       ManualBulletList,
       ManualOrderedList,
@@ -357,7 +248,7 @@ export function DocumentEditor({
     if (!editor || revisionRef.current === revision) return
     revisionRef.current = revision
     shellRef.current = documentShell(html)
-    editorDocumentRef.current = toEditorPages(resolveAssetUrls(shellRef.current.content, assetUrls))
+    editorDocumentRef.current = toEditableDocument(resolveAssetUrls(shellRef.current.content, assetUrls))
     acceptUpdatesRef.current = false
     editor.commands.setContent(editorDocumentRef.current.content, false)
     window.requestAnimationFrame(() => {
@@ -394,8 +285,7 @@ export function DocumentEditor({
         do {
           const savingSequence = changeSequenceRef.current
           setSaveState('saving')
-          const unpagedHtml = fromEditorPages(editor.getHTML(), editorDocumentRef.current)
-          const editorHtml = normalizeCanonicalHtml(restoreAssetReferences(unpagedHtml, assetUrls))
+          const editorHtml = normalizeCanonicalHtml(restoreAssetReferences(editor.getHTML(), assetUrls))
           const canonicalHtml = `${shellRef.current.opening}${editorHtml}${shellRef.current.closing}`
           const result = await saveDocument(documentId, revisionRef.current, canonicalHtml)
           revisionRef.current = result.revision
@@ -417,10 +307,15 @@ export function DocumentEditor({
   if (!editor) return null
 
   return (
-    <div className={styles.workspace}>
-      <div className={styles.toolbar} role="toolbar" aria-label="Форматирование">
-        <div className={styles.toolGroup}>
+    <div className="min-h-[calc(100vh-108px)]">
+      <div
+        className="sticky top-[108px] z-[25] flex min-h-12 items-center overflow-visible border-b border-app-border bg-white px-4 py-1.5 max-[1160px]:overflow-x-auto"
+        role="toolbar"
+        aria-label="Форматирование"
+      >
+        <div className={toolGroupClass}>
           <select
+            className="min-h-8 rounded-control border border-[#d5d9de] bg-white py-0 pl-[9px] pr-7 text-[#30363d]"
             aria-label="Стиль абзаца"
             disabled={!editable}
             value={
@@ -441,23 +336,24 @@ export function DocumentEditor({
             <option value="h3">Заголовок 3</option>
           </select>
         </div>
-        <div className={styles.toolGroup}>
-          <button className={styles.bold} type="button" title="Жирный (⌘B)" aria-label="Жирный" disabled={!editable} aria-pressed={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}>B</button>
-          <button className={styles.italic} type="button" title="Курсив (⌘I)" aria-label="Курсив" disabled={!editable} aria-pressed={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}>I</button>
-          <button className={styles.underline} type="button" title="Подчёркивание (⌘U)" aria-label="Подчёркивание" disabled={!editable} aria-pressed={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}>U</button>
+        <div className={toolGroupClass}>
+          <button className={cn(toolButtonClass, 'font-extrabold')} type="button" title="Жирный (⌘B)" aria-label="Жирный" disabled={!editable} aria-pressed={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}>B</button>
+          <button className={cn(toolButtonClass, 'font-serif italic')} type="button" title="Курсив (⌘I)" aria-label="Курсив" disabled={!editable} aria-pressed={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}>I</button>
+          <button className={cn(toolButtonClass, 'underline underline-offset-2')} type="button" title="Подчёркивание (⌘U)" aria-label="Подчёркивание" disabled={!editable} aria-pressed={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}>U</button>
         </div>
-        <div className={styles.toolGroup}>
-          <button type="button" title="Маркированный список" aria-label="Маркированный список" disabled={!editable} aria-pressed={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}>•≡</button>
-          <button type="button" title="Нумерованный список" aria-label="Нумерованный список" disabled={!editable} aria-pressed={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1≡</button>
+        <div className={toolGroupClass}>
+          <button className={toolButtonClass} type="button" title="Маркированный список" aria-label="Маркированный список" disabled={!editable} aria-pressed={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}>•≡</button>
+          <button className={toolButtonClass} type="button" title="Нумерованный список" aria-label="Нумерованный список" disabled={!editable} aria-pressed={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1≡</button>
         </div>
-        <div className={styles.toolGroup}>
-          <button className={styles.alignLeft} type="button" title="По левому краю" aria-label="По левому краю" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()}>≡</button>
-          <button className={styles.alignCenter} type="button" title="По центру" aria-label="По центру" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()}>≡</button>
-          <button className={styles.alignRight} type="button" title="По правому краю" aria-label="По правому краю" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()}>≡</button>
-          <button type="button" title="По ширине" aria-label="По ширине" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'justify' })} onClick={() => editor.chain().focus().setTextAlign('justify').run()}>☰</button>
+        <div className={toolGroupClass}>
+          <button className={cn(toolButtonClass, 'text-left')} type="button" title="По левому краю" aria-label="По левому краю" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'left' })} onClick={() => editor.chain().focus().setTextAlign('left').run()}>≡</button>
+          <button className={cn(toolButtonClass, 'text-center')} type="button" title="По центру" aria-label="По центру" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'center' })} onClick={() => editor.chain().focus().setTextAlign('center').run()}>≡</button>
+          <button className={cn(toolButtonClass, 'text-right')} type="button" title="По правому краю" aria-label="По правому краю" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'right' })} onClick={() => editor.chain().focus().setTextAlign('right').run()}>≡</button>
+          <button className={toolButtonClass} type="button" title="По ширине" aria-label="По ширине" disabled={!editable} aria-pressed={editor.isActive({ textAlign: 'justify' })} onClick={() => editor.chain().focus().setTextAlign('justify').run()}>☰</button>
         </div>
-        <div className={`${styles.toolGroup} ${styles.tableControl}`}>
+        <div className={toolGroupClass}>
           <button
+            className={toolButtonClass}
             type="button"
             title="Вставить таблицу"
             aria-label="Вставить таблицу"
@@ -468,15 +364,16 @@ export function DocumentEditor({
             ▦
           </button>
           {tablePickerOpen && (
-            <div className={styles.tablePicker}>
-              <strong>{tableSize.cols} × {tableSize.rows}</strong>
-              <div className={styles.tableGrid}>
+            <div className="absolute left-[5px] top-[calc(100%+7px)] z-40 w-[184px] rounded-[7px] border border-[#d3d7dc] bg-white p-3 shadow-[0_10px_30px_rgb(28_36_46_/_18%)]">
+              <strong className="mb-[9px] block text-center text-xs font-semibold text-[#555e68]">{tableSize.cols} × {tableSize.rows}</strong>
+              <div className="grid grid-cols-[repeat(5,24px)] justify-center gap-1">
                 {Array.from({ length: 25 }, (_, index) => {
                   const row = Math.floor(index / 5) + 1
                   const col = (index % 5) + 1
                   const active = row <= tableSize.rows && col <= tableSize.cols
                   return (
                     <button
+                      className="h-6 w-6 rounded-sm border border-[#bfc5cc] bg-white data-[active=true]:border-[#3d76c5] data-[active=true]:bg-[#dce9fb]"
                       key={`${row}-${col}`}
                       type="button"
                       aria-label={`Таблица ${col} на ${row}`}
@@ -494,13 +391,13 @@ export function DocumentEditor({
             </div>
           )}
         </div>
-        <div className={`${styles.toolGroup} ${styles.historyTools}`}>
-          <button type="button" title="Отменить (⌘Z)" aria-label="Отменить" disabled={!editable || !editor.can().chain().focus().undo().run()} onClick={() => editor.chain().focus().undo().run()}>↶</button>
-          <button type="button" title="Повторить (⇧⌘Z)" aria-label="Повторить" disabled={!editable || !editor.can().chain().focus().redo().run()} onClick={() => editor.chain().focus().redo().run()}>↷</button>
+        <div className={cn(toolGroupClass, 'ml-auto')}>
+          <button className={toolButtonClass} type="button" title="Отменить (⌘Z)" aria-label="Отменить" disabled={!editable || !editor.can().chain().focus().undo().run()} onClick={() => editor.chain().focus().undo().run()}>↶</button>
+          <button className={toolButtonClass} type="button" title="Повторить (⇧⌘Z)" aria-label="Повторить" disabled={!editable || !editor.can().chain().focus().redo().run()} onClick={() => editor.chain().focus().redo().run()}>↷</button>
         </div>
       </div>
-      <div className={styles.canvas}>
-        <EditorContent className={styles.document} editor={editor} />
+      <div className="flex min-w-0 justify-center overflow-x-auto px-6 pb-24 pt-7">
+        <EditorContent className="document-theme" editor={editor} />
       </div>
     </div>
   )

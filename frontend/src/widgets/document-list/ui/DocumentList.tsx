@@ -3,8 +3,6 @@ import { Link } from 'react-router-dom'
 
 import { deleteDocument, getDocuments } from '@/entities/document'
 
-import styles from './document-list.module.css'
-
 export function DocumentList() {
   const queryClient = useQueryClient()
   const query = useQuery({
@@ -24,26 +22,42 @@ export function DocumentList() {
   if (query.isError) return <p role="alert">Не удалось получить документы.</p>
   if (!query.data?.length) {
     return (
-      <section className={styles.empty} aria-labelledby="documents-empty-title">
-        <h2 id="documents-empty-title">Документов пока нет</h2>
-        <p>Загрузите первый DOCX, чтобы начать обработку.</p>
+      <section
+        className="grid min-h-[360px] place-content-center rounded-2xl border border-app-border bg-app-panel p-12 text-center"
+        aria-labelledby="documents-empty-title"
+      >
+        <h2 id="documents-empty-title" className="m-0 mb-2 text-xl font-bold text-app-text">
+          Документов пока нет
+        </h2>
+        <p className="m-0 text-app-muted">Загрузите первый DOCX, чтобы начать обработку.</p>
       </section>
     )
   }
 
   return (
-    <div className={styles.list}>
+    <div className="grid gap-3">
       {query.data.map((document) => (
-        <article className={styles.card} key={document.id}>
-          <Link className={styles.cardLink} to={`/documents/${document.id}`}>
+        <article
+          className="flex items-center justify-between rounded-xl border border-app-border bg-app-panel transition-colors hover:border-app-brand"
+          key={document.id}
+        >
+          <Link
+            className="flex flex-1 items-center justify-between px-6 py-5 text-inherit no-underline"
+            to={`/documents/${document.id}`}
+          >
             <div>
-              <h2>{document.title}</h2>
-              <p>{document.source_filename}</p>
+              <h2 className="m-0 mb-1 text-[17px] font-bold text-app-text">{document.title}</h2>
+              <p className="m-0 text-app-muted">{document.source_filename}</p>
             </div>
-            <span data-status={document.status}>{document.status}</span>
+            <span
+              className="rounded-full border border-app-border bg-app-subtle px-3 py-1 text-xs font-bold uppercase tracking-wide text-app-muted"
+              data-status={document.status}
+            >
+              {document.status}
+            </span>
           </Link>
           <button
-            className={styles.deleteButton}
+            className="mr-4 rounded-control border-0 bg-transparent px-2.5 py-2 text-app-danger transition-colors hover:bg-app-dangerBg disabled:opacity-45"
             type="button"
             disabled={deletion.isPending || ['queued', 'processing'].includes(document.status)}
             onClick={() => {

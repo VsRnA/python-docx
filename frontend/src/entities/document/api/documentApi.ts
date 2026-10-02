@@ -45,6 +45,12 @@ export function exportDocumentPdf(id: string) {
   })
 }
 
+export function exportDocumentHtmlPreview(id: string) {
+  return apiRequest<{ url: string; expires_in: number }>(`/documents/${id}/previews/html`, {
+    method: 'POST',
+  })
+}
+
 export function getDocumentVersions(id: string) {
   return apiRequest<DocumentVersion[]>(`/documents/${id}/versions`)
 }

@@ -113,3 +113,8 @@ class SaveDocumentResponse(BaseModel):
 class ExportPdfResponse(BaseModel):
     url: str
     expires_in: int
+
+
+class ExportHtmlPreviewResponse(BaseModel):
+    url: str
+    expires_in: int

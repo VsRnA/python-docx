@@ -2,9 +2,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 
 import { createDocument, createMergedDocument } from '@/entities/document'
+import { cn } from '@/shared/lib/cn'
 import { Button } from '@/shared/ui/button'
-
-import styles from './upload-document.module.css'
 
 const MAX_DOCX_SIZE_BYTES = 50 * 1024 * 1024
 type UploadMode = 'single' | 'merge'
@@ -66,10 +65,20 @@ export function UploadDocument() {
   }
 
   return (
-    <div className={styles.root}>
-      <div className={styles.modeToggle} aria-label="Режим загрузки документа">
-        <label className={styles.modeOption} data-active={mode === 'single'}>
+    <div className="flex min-w-[360px] flex-col items-end gap-2.5">
+      <div
+        className="grid w-full grid-cols-2 rounded-panel border border-app-border bg-app-bg p-[3px]"
+        aria-label="Режим загрузки документа"
+      >
+        <label
+          className={cn(
+            'flex min-h-[34px] cursor-pointer items-center justify-center rounded-control text-sm font-bold text-[#4f5661]',
+            mode === 'single' && 'bg-app-panel text-app-text shadow-control',
+          )}
+          data-active={mode === 'single'}
+        >
           <input
+            className="pointer-events-none absolute h-px w-px opacity-0"
             type="radio"
             name="upload-mode"
             checked={mode === 'single'}
@@ -77,8 +86,15 @@ export function UploadDocument() {
           />
           <span>Один DOCX</span>
         </label>
-        <label className={styles.modeOption} data-active={mode === 'merge'}>
+        <label
+          className={cn(
+            'flex min-h-[34px] cursor-pointer items-center justify-center rounded-control text-sm font-bold text-[#4f5661]',
+            mode === 'merge' && 'bg-app-panel text-app-text shadow-control',
+          )}
+          data-active={mode === 'merge'}
+        >
           <input
+            className="pointer-events-none absolute h-px w-px opacity-0"
             type="radio"
             name="upload-mode"
             checked={mode === 'merge'}
@@ -89,7 +105,7 @@ export function UploadDocument() {
       </div>
       {mode === 'merge' && (
         <input
-          className={styles.notes}
+          className="min-h-[38px] w-full rounded-panel border border-app-border px-3"
           type="text"
           value={mergeNotes}
           placeholder="Комментарий для GPT Astra 6, необязательно"
@@ -108,7 +124,7 @@ export function UploadDocument() {
         {isPending ? 'Загрузка…' : mode === 'merge' ? 'Выбрать DOCX для слияния' : 'Загрузить DOCX'}
       </Button>
       {error && (
-        <p className={styles.error} role="alert">
+        <p className="m-0 max-w-[360px] text-right text-sm text-app-danger" role="alert">
           {error}
         </p>
       )}
