@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import re
 import mimetypes
 from hashlib import sha256
 from io import BytesIO
@@ -60,6 +61,8 @@ class OpenAIAstraDocumentProcessor:
         prompt_package_version: str,
         theme_id: str,
         theme_version: str,
+        style_settings: dict | None = None,
+        custom_style_reference_pdf: bytes | None = None,
     ) -> ProcessedDocument:
         if self._source_pdf_converter is None:
             raise RuntimeError("A DOCX-to-PDF converter is required for initial document import")
@@ -69,7 +72,7 @@ class OpenAIAstraDocumentProcessor:
             filename=filename,
             content=content,
         )
-        style_reference_pdf = self._read_style_reference_pdf()
+        style_reference_pdf = custom_style_reference_pdf or self._read_style_reference_pdf()
         style_overviews = self._read_style_overviews()
         raw = await asyncio.to_thread(
             self._request,
@@ -86,6 +89,7 @@ class OpenAIAstraDocumentProcessor:
             package.classes,
             theme_id,
             theme_version,
+            style_settings or {},
             source_assets,
         )
         payload = AstraFullDocumentResponse.model_validate_json(raw)
@@ -184,6 +188,7 @@ class OpenAIAstraDocumentProcessor:
         classes: str,
         theme_id: str,
         theme_version: str,
+        style_settings: dict,
         source_assets: list[ProcessedAsset],
     ) -> str:
         file_inputs = [
@@ -206,9 +211,22 @@ class OpenAIAstraDocumentProcessor:
             for index, asset in enumerate(source_assets, start=1)
         )
         reference_digest = sha256(style_reference_pdf).hexdigest()[:16]
+        safe_settings = {}
+        if isinstance(style_settings.get("page"), str) and re.fullmatch(r"\s*(A4|A5|Letter)\s*(?:,\s*(portrait|landscape))?\s*", style_settings["page"], re.IGNORECASE):
+            safe_settings["page"] = style_settings["page"]
+        if style_settings.get("font") in {"Lato", "Arial", "Helvetica", "Inter"}:
+            safe_settings["font"] = style_settings["font"]
+        if isinstance(style_settings.get("accent"), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", style_settings["accent"]):
+            safe_settings["accent"] = style_settings["accent"]
+        margins = style_settings.get("margins")
+        if isinstance(margins, str):
+            values = re.findall(r"\d+(?:\.\d+)?", margins)
+            if len(values) == 3 and all(8 <= float(value) <= 40 for value in values):
+                safe_settings["margins"] = margins
         prompt = (
             f"{task}\n\nDocument id: {document_id}. Original filename: {filename}. "
             f"Theme: {theme_id}@{theme_version}.\n"
+            f"User-approved style tokens: {json.dumps(safe_settings, ensure_ascii=False, sort_keys=True)}. Apply these values consistently to generated document classes.\n"
             f"Style reference version: sha256:{reference_digest}.\n"
             "Input roles are strict: SOURCE_DOCUMENT.docx and SOURCE_RENDER.pdf contain source "
             "content. STYLE_REFERENCE.pdf and STYLE_OVERVIEW images contain visual guidance only. "

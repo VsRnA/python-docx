@@ -12,6 +12,7 @@ class HttpPdfRenderer:
         title: str,
         theme_id: str,
         theme_version: str,
+        style_settings: dict | None = None,
     ) -> bytes:
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
@@ -21,6 +22,7 @@ class HttpPdfRenderer:
                     "title": title,
                     "themeId": theme_id,
                     "themeVersion": theme_version,
+                    "styleSettings": style_settings or {},
                 },
             )
             response.raise_for_status()
@@ -33,6 +35,7 @@ class HttpPdfRenderer:
         title: str,
         theme_id: str,
         theme_version: str,
+        style_settings: dict | None = None,
     ) -> bytes:
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
@@ -42,6 +45,7 @@ class HttpPdfRenderer:
                     "title": title,
                     "themeId": theme_id,
                     "themeVersion": theme_version,
+                    "styleSettings": style_settings or {},
                 },
             )
             response.raise_for_status()

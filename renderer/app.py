@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,15 +23,38 @@ class RenderRequest(BaseModel):
     themeId: str
     themeVersion: str
     title: str = ""
+    styleSettings: dict[str, object] = Field(default_factory=dict)
 
 
 def _theme_css(payload: RenderRequest) -> str:
     key = f"{payload.themeId}@{payload.themeVersion}"
     if key not in SUPPORTED_THEMES:
         raise HTTPException(status_code=422, detail="Unsupported document theme")
-    return (THEMES_ROOT / payload.themeId / payload.themeVersion / "print.css").read_text(
+    base_css = (THEMES_ROOT / payload.themeId / payload.themeVersion / "print.css").read_text(
         encoding="utf-8"
     )
+    settings = payload.styleSettings
+    overrides: list[str] = []
+    accent = settings.get("accent", "#F67828")
+    if isinstance(accent, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
+        overrides.append(f":root {{ --manual-orange: {accent}; }}")
+    fonts = {"Lato": "Lato", "Arial": "Arial", "Helvetica": "Helvetica", "Inter": "Inter"}
+    font = settings.get("font", "Lato")
+    if isinstance(font, str) and font in fonts:
+        overrides.append(f":root {{ font-family: '{fonts[font]}', Arial, sans-serif; }}")
+    page = settings.get("page", "A4, portrait")
+    if isinstance(page, str):
+        match = re.fullmatch(r"\s*(A4|A5|Letter)\s*(?:,\s*(portrait|landscape))?\s*", page, re.IGNORECASE)
+        if match:
+            page_size = "Letter" if match.group(1).lower() == "letter" else match.group(1).upper()
+            orientation = (match.group(2) or "portrait").lower()
+            overrides.append(f"@page {{ size: {page_size} {orientation}; }}")
+    margins = settings.get("margins")
+    if isinstance(margins, str):
+        values = re.findall(r"\d+(?:\.\d+)?", margins)
+        if len(values) == 3 and all(8 <= float(value) <= 40 for value in values):
+            overrides.append(f"@page {{ margin: {values[0]}mm {values[1]}mm {values[2]}mm; }}")
+    return base_css + "\n" + "\n".join(overrides)
 
 
 def _build_document(payload: RenderRequest) -> str:

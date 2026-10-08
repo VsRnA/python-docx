@@ -13,7 +13,13 @@ Requirements:
 3. Reference every supplied source image exactly by its asset:// id. Return base64 only for a newly
    generated flattened replacement image.
 4. Use semantic tags and the closest approved component. Add stable data-block-id values.
-5. Preserve the source language. Translation is performed by another service.
-6. Put ambiguities and suspected source contradictions only in warnings. Do not insert editorial
+5. Use heading tags only for actual chapter and section titles in the source hierarchy. Determine
+   this from the DOCX heading/outline structure, numbering, and surrounding section relationships;
+   uppercase text, bold formatting, font size, or a short standalone line alone do not make a heading.
+   Do not promote warning labels (WARNING, CAUTION, DANGER, NOTE), table headers, list lead-ins,
+   contents entries, captions, or inline labels to section headings. Render safety labels with the
+   approved warning component and keep them out of the document outline.
+6. Preserve the source language. Translation is performed by another service.
+7. Put ambiguities and suspected source contradictions only in warnings. Do not insert editorial
    notes, unsupported corrections or a generated source-notes chapter into the manual.
-7. Return a single full_document JSON envelope without Markdown fences.
+8. Return a single full_document JSON envelope without Markdown fences.

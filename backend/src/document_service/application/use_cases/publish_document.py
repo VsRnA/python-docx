@@ -40,6 +40,7 @@ class PublishDocument:
             title=document.title,
             theme_id=version.theme_id,
             theme_version=version.theme_version,
+            style_settings=document.style_settings,
         )
         publication_id = uuid4()
         key = f"documents/{document.id}/publications/{publication_id}.html"

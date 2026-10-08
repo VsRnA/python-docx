@@ -44,3 +44,10 @@ class Job:
         self.error_code = code
         self.error_message = message[:4000]
         self.finished_at = datetime.now(UTC)
+
+    def cancel(self) -> None:
+        if self.status not in {"queued", "running"}:
+            raise ValueError("Only queued or running jobs can be cancelled")
+        self.status = "cancelled"
+        self.stage = "cancelled"
+        self.finished_at = datetime.now(UTC)

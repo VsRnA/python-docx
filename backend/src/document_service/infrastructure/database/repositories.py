@@ -7,6 +7,7 @@ from document_service.domain.entities.document_source_file import DocumentSource
 from document_service.domain.entities.document_version import DocumentVersion
 from document_service.domain.entities.job import Job
 from document_service.domain.entities.publication import Publication
+from document_service.domain.entities.processing_profile import ProcessingProfile
 from document_service.domain.entities.ai_message import AiMessage
 from document_service.domain.value_objects.document_status import DocumentStatus
 from document_service.infrastructure.database.models import (
@@ -15,6 +16,7 @@ from document_service.infrastructure.database.models import (
     DocumentVersionModel,
     JobModel,
     PublicationModel,
+    ProcessingProfileModel,
     AiMessageModel,
     DocumentSourceFileModel,
 )
@@ -32,17 +34,14 @@ class SqlAlchemyDocumentRepository:
         model = await self._session.get(DocumentModel, document_id)
         return self._to_entity(model) if model else None
 
-    async def list(self, *, owner_id, limit: int, offset: int) -> list[Document]:
-        result = await self._session.execute(
-            select(DocumentModel)
-            .where(
-                DocumentModel.owner_id == owner_id,
-                DocumentModel.status != DocumentStatus.DELETED.value,
-            )
-            .order_by(DocumentModel.updated_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+    async def list(self, *, owner_id, limit: int, offset: int, search: str | None = None, status: str | None = None, sort: str = "updated") -> list[Document]:
+        query = select(DocumentModel).where(DocumentModel.owner_id == owner_id, DocumentModel.status != DocumentStatus.DELETED.value)
+        if search:
+            query = query.where(DocumentModel.title.ilike(f"%{search}%") | DocumentModel.source_filename.ilike(f"%{search}%"))
+        if status:
+            query = query.where(DocumentModel.status == status)
+        order_column = DocumentModel.title if sort == "title" else DocumentModel.created_at if sort == "created" else DocumentModel.updated_at
+        result = await self._session.execute(query.order_by(order_column.asc() if sort == "title" else order_column.desc()).limit(limit).offset(offset))
         return [self._to_entity(model) for model in result.scalars()]
 
     async def update(self, document: Document) -> None:
@@ -69,6 +68,8 @@ class SqlAlchemyDocumentRepository:
             status=document.status.value,
             current_revision=document.current_revision,
             processing_job_id=document.processing_job_id,
+            style_version_id=document.style_version_id,
+            style_settings=document.style_settings,
             created_at=document.created_at,
             updated_at=document.updated_at,
         )
@@ -85,6 +86,8 @@ class SqlAlchemyDocumentRepository:
             status=DocumentStatus(model.status),
             current_revision=model.current_revision,
             processing_job_id=model.processing_job_id,
+            style_version_id=model.style_version_id,
+            style_settings=model.style_settings or {},
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -356,9 +359,29 @@ class SqlAlchemyPublicationRepository:
                 object_key=model.object_key,
                 created_by=model.created_by,
                 created_at=model.created_at,
+                revoked_at=model.revoked_at,
             )
             for model in result.scalars()
         ]
+
+
+class SqlAlchemyProcessingProfileRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, profile: ProcessingProfile) -> None:
+        self._session.add(ProcessingProfileModel(
+            id=profile.id,
+            document_id=profile.document_id,
+            style_version_id=profile.style_version_id,
+            source_language=profile.source_language,
+            target_language=profile.target_language,
+            translation_enabled=profile.translation_enabled,
+            glossary_version_id=profile.glossary_version_id,
+            status=profile.status,
+            created_at=profile.created_at,
+        ))
+        await self._session.commit()
 
 
 class SqlAlchemyAiMessageRepository:

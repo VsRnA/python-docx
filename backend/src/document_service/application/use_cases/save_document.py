@@ -34,7 +34,10 @@ class SaveDocument:
         document = await self._documents.get(document_id)
         if document is None or document.owner_id != owner_id:
             raise LookupError("Document not found")
-        if document.status is not DocumentStatus.READY:
+        is_translation = reason.startswith("translation_")
+        if document.status is not DocumentStatus.READY and not (
+            is_translation and document.status is DocumentStatus.PROCESSING
+        ):
             raise ValueError("Only ready documents can be edited")
         if document.current_revision != base_revision:
             raise RevisionConflictError(

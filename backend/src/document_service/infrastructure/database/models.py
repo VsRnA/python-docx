@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, Uuid
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, Uuid, Boolean, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from document_service.infrastructure.database.base import Base
@@ -19,6 +19,8 @@ class DocumentModel(Base):
     status: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     current_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     processing_job_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    style_version_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("document_style_versions.id"))
+    style_settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -110,6 +112,7 @@ class PublicationModel(Base):
     object_key: Mapped[str] = mapped_column(String(1500), nullable=False)
     created_by: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AiMessageModel(Base):
@@ -122,4 +125,83 @@ class AiMessageModel(Base):
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DocumentStyleModel(Base):
+    __tablename__ = "document_styles"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    owner_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DocumentStyleVersionModel(Base):
+    __tablename__ = "document_style_versions"
+    __table_args__ = (Index("uq_document_style_versions_version", "style_id", "version", unique=True),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    style_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("document_styles.id", ondelete="CASCADE"), nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    manifest: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    settings: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    validation_report: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProcessingProfileModel(Base):
+    __tablename__ = "processing_profiles"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    style_version_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("document_style_versions.id"), nullable=False)
+    source_language: Mapped[str | None] = mapped_column(String(32))
+    target_language: Mapped[str | None] = mapped_column(String(32))
+    translation_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    glossary_version_id: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="created")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DocumentSnapshotModel(Base):
+    __tablename__ = "document_snapshots"
+    __table_args__ = (Index("uq_document_snapshots_revision", "document_id", "revision", unique=True),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    document_tree: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    pagination_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DocumentOperationModel(Base):
+    __tablename__ = "document_operations"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    base_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    resulting_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    operation_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    block_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DocumentCommentModel(Base):
+    __tablename__ = "document_comments"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    block_id: Mapped[str | None] = mapped_column(String(255))
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

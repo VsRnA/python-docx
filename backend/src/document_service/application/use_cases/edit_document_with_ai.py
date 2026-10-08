@@ -36,6 +36,54 @@ class EditDocumentWithAi:
         self._assets = AssetIngestor(assets, storage)
         self._save = SaveDocument(documents, versions, validator)
 
+    async def propose(
+        self,
+        *,
+        document_id: UUID,
+        owner_id: UUID,
+        base_revision: int,
+        instruction: str,
+        target_block_ids: list[str] | None = None,
+    ) -> dict:
+        document = await self._documents.get(document_id)
+        if document is None or document.owner_id != owner_id:
+            raise LookupError("Document not found")
+        if document.current_revision != base_revision:
+            raise RevisionConflictError(f"Expected revision {base_revision}, current revision is {document.current_revision}")
+        version = await self._versions.get_current(document_id)
+        if version is None:
+            raise ValueError("Document has no editable version")
+        if not instruction.strip():
+            raise ValueError("AI edit instruction must not be empty")
+        block_hashes = self._changes.block_hashes(version.html)
+        normalized_target_block_ids = list(dict.fromkeys(target_block_ids or []))
+        unknown_block_ids = [block_id for block_id in normalized_target_block_ids if block_id not in block_hashes]
+        if unknown_block_ids:
+            raise ValueError("Selected blocks were not found: " + ", ".join(unknown_block_ids[:10]))
+        change_set = await self._editor.edit(
+            html=version.html,
+            instruction=instruction.strip(),
+            base_revision=base_revision,
+            block_hashes=block_hashes,
+            target_block_ids=normalized_target_block_ids or None,
+            prompt_package_version=self._prompt_package_version,
+            theme_id=version.theme_id,
+            theme_version=version.theme_version,
+        )
+        if normalized_target_block_ids and any(operation.block_id not in set(normalized_target_block_ids) for operation in change_set.operations):
+            raise ValueError("AI edit changed blocks outside the selected area")
+        changed_html = self._changes.apply(version.html, change_set, expected_revision=base_revision)
+        return {
+            "base_revision": base_revision,
+            "summary": change_set.summary or "AI подготовил предложение изменений",
+            "before_html": version.html,
+            "after_html": changed_html,
+            "operations": [
+                {"operation": operation.operation, "block_id": operation.block_id, "html": operation.html}
+                for operation in change_set.operations
+            ],
+        }
+
     async def execute(
         self,
         *,

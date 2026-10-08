@@ -25,6 +25,16 @@ export interface DocumentDetails {
   source_size_bytes: number
   status: DocumentStatus
   current_revision: number
+  processing_job_id?: string | null
+  style_version_id?: string | null
+  style_settings?: Record<string, unknown>
+  processing_profile?: {
+    source_language: string | null
+    target_language: string | null
+    translation_enabled: boolean
+    glossary_version_id: string | null
+    status?: string
+  } | null
   html: string | null
   astra_html: string | null
   theme_id: string | null
@@ -48,6 +58,15 @@ export interface DocumentVersion {
   reason: string
   created_by: string | null
   created_at: string
+}
+
+export interface DocumentPublication {
+  id: string
+  revision: number
+  url: string
+  expires_in: number | null
+  created_at: string
+  revoked_at: string | null
 }
 
 export interface AiMessage {

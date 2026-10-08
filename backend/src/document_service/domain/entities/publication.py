@@ -11,3 +11,4 @@ class Publication:
     created_by: UUID
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    revoked_at: datetime | None = None

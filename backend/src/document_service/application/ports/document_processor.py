@@ -35,4 +35,6 @@ class DocumentProcessor(Protocol):
         prompt_package_version: str,
         theme_id: str,
         theme_version: str,
+        style_settings: dict | None = None,
+        custom_style_reference_pdf: bytes | None = None,
     ) -> ProcessedDocument: ...

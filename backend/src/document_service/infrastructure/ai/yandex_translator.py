@@ -47,8 +47,13 @@ class YandexGPTTranslator:
         glossary_instruction = (
             f" Apply the terminology glossary version {glossary_version}." if glossary_version else ""
         )
+        language_instruction = (
+            f"Translate from {source_language} to {target_language}."
+            if source_language and source_language.lower() != "auto"
+            else f"Detect the source language from the text, then translate it to {target_language}."
+        )
         prompt = (
-            f"Translate technical instructions from {source_language} to {target_language}. "
+            f"{language_instruction} "
             "Preserve every XML-like segment id, numbers, units and model names. "
             f"Return only the translated tagged segments.{glossary_instruction}\n" + lines
         )

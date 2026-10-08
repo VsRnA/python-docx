@@ -4,8 +4,9 @@ import Underline from '@tiptap/extension-underline'
 import StarterKit from '@tiptap/starter-kit'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { useEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 
-import { saveDocument } from '@/entities/document'
+import { saveDocument, uploadDocumentAsset } from '@/entities/document'
 import type { SelectionContext, SelectionContextBlock } from '@/entities/document'
 import { ApiError } from '@/shared/api/client'
 import { cn } from '@/shared/lib/cn'
@@ -16,6 +17,7 @@ import {
   restoreAssetReferences,
   toEditableDocument,
 } from '../model/canonical-html'
+import { clearLocalDraft, getLocalDraft, saveLocalDraft } from '../model/localDraftStore'
 import {
   ManualFigure,
   ManualCaption,
@@ -64,8 +66,8 @@ import {
 
 const toolGroupClass = 'relative flex min-h-8 items-center gap-0.5 border-r border-[#dfe2e6] px-2 first:pl-0 last:border-r-0 last:pr-0'
 const toolButtonClass = cn(
-  'h-8 w-8 cursor-pointer rounded-[5px] border border-transparent bg-transparent p-0 text-[15px] text-[#30363d]',
-  'hover:bg-[#f1f3f4] aria-pressed:border-[#c7d9f3] aria-pressed:bg-[#e5eefb] aria-pressed:text-[#174f9e]',
+  'h-8 w-8 cursor-pointer rounded-[3px] border border-transparent bg-transparent p-0 text-[15px] text-[#30363d]',
+  'hover:bg-[#eef1f4] aria-pressed:border-[#c7d9f3] aria-pressed:bg-[#e5eefb] aria-pressed:text-[#174f9e]',
   'disabled:cursor-default disabled:opacity-45',
 )
 
@@ -74,6 +76,7 @@ interface DocumentEditorProps {
   revision: number
   html: string
   assetUrls: Record<string, string>
+  styleSettings?: Record<string, unknown>
   editable?: boolean
   onRevisionChange?: (revision: number) => void
   onSaveStateChange?: (state: 'saved' | 'changed' | 'saving' | 'error') => void
@@ -143,6 +146,7 @@ export function DocumentEditor({
   revision,
   html,
   assetUrls,
+  styleSettings = {},
   editable = true,
   onRevisionChange,
   onSaveStateChange,
@@ -154,6 +158,46 @@ export function DocumentEditor({
   const [saveState, setSaveState] = useState<'saved' | 'changed' | 'saving' | 'error'>('saved')
   const [tablePickerOpen, setTablePickerOpen] = useState(false)
   const [tableSize, setTableSize] = useState({ rows: 3, cols: 3 })
+  const [zoom, setZoom] = useState(70)
+  const [assetUrlMap, setAssetUrlMap] = useState(assetUrls)
+  const [assetUploadError, setAssetUploadError] = useState<string | null>(null)
+  const pageSetting = typeof styleSettings.page === 'string' ? styleSettings.page : 'A4, portrait'
+  const pageMatch = pageSetting.match(/^\s*(A4|A5|Letter)\s*(?:,\s*(portrait|landscape))?\s*$/i)
+  const pageWidths: Record<string, string> = { A4: '210mm', A5: '148mm', Letter: '216mm' }
+  const pageHeights: Record<string, string> = { A4: '297mm', A5: '210mm', Letter: '279mm' }
+  const selectedPage = pageMatch?.[1]?.toLowerCase() === 'letter' ? 'Letter' : pageMatch?.[1]?.toUpperCase() ?? 'A4'
+  const landscape = pageMatch?.[2]?.toLowerCase() === 'landscape'
+  const marginValues = typeof styleSettings.margins === 'string' ? styleSettings.margins.match(/\d+(?:\.\d+)?/g) : null
+  const verticalMargin = marginValues?.length === 3 && marginValues.every((value) => Number(value) >= 8 && Number(value) <= 40) ? `${marginValues[0]}mm` : '24mm'
+  const horizontalMargin = marginValues?.length === 3 && marginValues.every((value) => Number(value) >= 8 && Number(value) <= 40) ? `${marginValues[1]}mm` : '13mm'
+  const bottomMargin = marginValues?.length === 3 && marginValues.every((value) => Number(value) >= 8 && Number(value) <= 40) ? `${marginValues[2]}mm` : '18mm'
+  const accentColor = typeof styleSettings.accent === 'string' && /^#[\da-f]{6}$/i.test(styleSettings.accent) ? styleSettings.accent : '#f67828'
+  const fontFamily = ['Lato', 'Arial', 'Helvetica', 'Inter'].includes(String(styleSettings.font)) ? String(styleSettings.font) : 'Lato'
+  const editorThemeStyle = {
+    '--manual-orange': accentColor,
+    '--manual-page-width': landscape ? pageHeights[selectedPage] : pageWidths[selectedPage],
+    '--manual-page-min-height': landscape ? pageWidths[selectedPage] : pageHeights[selectedPage],
+    '--manual-page-padding-top': verticalMargin,
+    '--manual-page-padding-x': horizontalMargin,
+    '--manual-page-padding-bottom': bottomMargin,
+    '--manual-editor-font': fontFamily,
+  } as CSSProperties
+  useEffect(() => {
+    const viewport = canvasViewportRef.current
+    if (!viewport) return
+    const fitToViewport = () => {
+      const pageWidthMm = Number.parseFloat(landscape ? pageHeights[selectedPage] : pageWidths[selectedPage])
+      const pageWidthPx = pageWidthMm * (96 / 25.4)
+      const availableWidth = Math.max(1, viewport.clientWidth - 48)
+      setZoom(Math.max(50, Math.min(100, Math.floor((availableWidth / pageWidthPx) * 100))))
+    }
+    const observer = new ResizeObserver(fitToViewport)
+    observer.observe(viewport)
+    fitToViewport()
+    return () => observer.disconnect()
+  }, [landscape, selectedPage])
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const canvasViewportRef = useRef<HTMLDivElement>(null)
   const revisionRef = useRef(revision)
   const shellRef = useRef(documentShell(html))
   const editorDocumentRef = useRef(
@@ -163,6 +207,7 @@ export function DocumentEditor({
   const savedSequenceRef = useRef(0)
   const savingRef = useRef(false)
   const acceptUpdatesRef = useRef(false)
+  const draftRestoreRef = useRef(false)
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -221,9 +266,13 @@ export function DocumentEditor({
     content: editorDocumentRef.current.content,
     immediatelyRender: false,
     editable,
-    onUpdate: () => {
+    onUpdate: ({ editor: updatedEditor }) => {
       if (!acceptUpdatesRef.current) return
       changeSequenceRef.current += 1
+      const editorHtml = normalizeCanonicalHtml(restoreAssetReferences(updatedEditor.getHTML(), assetUrlMap))
+      const canonicalHtml = `${shellRef.current.opening}${editorHtml}${shellRef.current.closing}`
+      void saveLocalDraft({ documentId, baseRevision: revisionRef.current, html: canonicalHtml, updatedAt: Date.now() })
+        .catch(() => onSaveError?.('Не удалось сохранить локальную копию изменений'))
       setSaveState('changed')
     },
     onSelectionUpdate: ({ editor: selectedEditor }) => {
@@ -236,6 +285,10 @@ export function DocumentEditor({
   }, [editable, editor])
 
   useEffect(() => {
+    setAssetUrlMap((current) => ({ ...assetUrls, ...current }))
+  }, [assetUrls])
+
+  useEffect(() => {
     if (!editor) return
     acceptUpdatesRef.current = false
     const frame = window.requestAnimationFrame(() => {
@@ -245,17 +298,47 @@ export function DocumentEditor({
   }, [editor])
 
   useEffect(() => {
+    if (!editor || draftRestoreRef.current) return
+    draftRestoreRef.current = true
+    void getLocalDraft(documentId).then((draft) => {
+      if (!draft) return
+      if (draft.baseRevision !== revisionRef.current) {
+        onSaveError?.('На этом устройстве есть черновик от другой редакции. Сравните версии перед продолжением.')
+        setSaveState('error')
+        return
+      }
+      shellRef.current = documentShell(draft.html)
+      editorDocumentRef.current = toEditableDocument(resolveAssetUrls(shellRef.current.content, assetUrlMap))
+      acceptUpdatesRef.current = false
+      editor.commands.setContent(editorDocumentRef.current.content, false)
+      changeSequenceRef.current += 1
+      setSaveState('changed')
+      window.requestAnimationFrame(() => { acceptUpdatesRef.current = true })
+    }).catch(() => onSaveError?.('Не удалось прочитать локальный черновик'))
+  }, [assetUrlMap, documentId, editor, onSaveError])
+
+  useEffect(() => {
+    const retryPendingDraft = () => {
+      void getLocalDraft(documentId).then((draft) => {
+        if (draft && draft.baseRevision === revisionRef.current) setSaveState('changed')
+      }).catch(() => undefined)
+    }
+    window.addEventListener('online', retryPendingDraft)
+    return () => window.removeEventListener('online', retryPendingDraft)
+  }, [documentId])
+
+  useEffect(() => {
     if (!editor || revisionRef.current === revision) return
     revisionRef.current = revision
     shellRef.current = documentShell(html)
-    editorDocumentRef.current = toEditableDocument(resolveAssetUrls(shellRef.current.content, assetUrls))
+    editorDocumentRef.current = toEditableDocument(resolveAssetUrls(shellRef.current.content, assetUrlMap))
     acceptUpdatesRef.current = false
     editor.commands.setContent(editorDocumentRef.current.content, false)
     window.requestAnimationFrame(() => {
       acceptUpdatesRef.current = true
     })
     setSaveState('saved')
-  }, [assetUrls, editor, html, revision])
+  }, [assetUrlMap, editor, html, revision])
 
   useEffect(() => {
     onSaveStateChange?.(saveState)
@@ -285,7 +368,7 @@ export function DocumentEditor({
         do {
           const savingSequence = changeSequenceRef.current
           setSaveState('saving')
-          const editorHtml = normalizeCanonicalHtml(restoreAssetReferences(editor.getHTML(), assetUrls))
+          const editorHtml = normalizeCanonicalHtml(restoreAssetReferences(editor.getHTML(), assetUrlMap))
           const canonicalHtml = `${shellRef.current.opening}${editorHtml}${shellRef.current.closing}`
           const result = await saveDocument(documentId, revisionRef.current, canonicalHtml)
           revisionRef.current = result.revision
@@ -293,6 +376,7 @@ export function DocumentEditor({
           onSaveError?.(null)
           onRevisionChange?.(result.revision)
         } while (changeSequenceRef.current > savedSequenceRef.current)
+        await clearLocalDraft(documentId)
         setSaveState('saved')
       } catch (error) {
         setSaveState('error')
@@ -302,14 +386,14 @@ export function DocumentEditor({
       }
     }, 1200)
     return () => window.clearTimeout(timeout)
-  }, [assetUrls, documentId, editor, onRevisionChange, onSaveError, saveState])
+  }, [assetUrlMap, documentId, editor, onRevisionChange, onSaveError, saveState])
 
   if (!editor) return null
 
   return (
-    <div className="min-h-[calc(100vh-108px)]">
+    <div className="workbench-editor min-h-[calc(100vh-108px)]">
       <div
-        className="sticky top-[108px] z-[25] flex min-h-12 items-center overflow-visible border-b border-app-border bg-white px-4 py-1.5 max-[1160px]:overflow-x-auto"
+        className="workbench-toolbar sticky top-[108px] z-[25] flex min-h-11 items-center overflow-visible border-b border-app-border bg-white px-4 py-1 max-[1160px]:overflow-x-auto"
         role="toolbar"
         aria-label="Форматирование"
       >
@@ -340,6 +424,13 @@ export function DocumentEditor({
           <button className={cn(toolButtonClass, 'font-extrabold')} type="button" title="Жирный (⌘B)" aria-label="Жирный" disabled={!editable} aria-pressed={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}>B</button>
           <button className={cn(toolButtonClass, 'font-serif italic')} type="button" title="Курсив (⌘I)" aria-label="Курсив" disabled={!editable} aria-pressed={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}>I</button>
           <button className={cn(toolButtonClass, 'underline underline-offset-2')} type="button" title="Подчёркивание (⌘U)" aria-label="Подчёркивание" disabled={!editable} aria-pressed={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}>U</button>
+          <button className={toolButtonClass} type="button" title="Добавить или изменить ссылку" aria-label="Ссылка" disabled={!editable} aria-pressed={editor.isActive('link')} onClick={() => {
+            const currentHref = editor.getAttributes('link').href as string | undefined
+            const href = window.prompt('Введите адрес ссылки', currentHref ?? 'https://')
+            if (href === null) return
+            if (!href.trim()) editor.chain().focus().unsetLink().run()
+            else editor.chain().focus().setLink({ href: href.trim() }).run()
+          }}>↗</button>
         </div>
         <div className={toolGroupClass}>
           <button className={toolButtonClass} type="button" title="Маркированный список" aria-label="Маркированный список" disabled={!editable} aria-pressed={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}>•≡</button>
@@ -390,15 +481,40 @@ export function DocumentEditor({
               </div>
             </div>
           )}
+          <button className={toolButtonClass} type="button" title="Вставить изображение" aria-label="Вставить изображение" disabled={!editable} onClick={() => imageInputRef.current?.click()}>▧</button>
+          <input ref={imageInputRef} className="hidden" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={async (event) => {
+            const file = event.target.files?.[0]
+            if (!file) return
+            setAssetUploadError(null)
+            try {
+              const asset = await uploadDocumentAsset(documentId, file)
+              setAssetUrlMap((current) => ({ ...current, [asset.id]: asset.url }))
+              editor.chain().focus().setImage({ src: asset.url, alt: asset.alt, title: asset.filename }).run()
+            } catch {
+              setAssetUploadError('Не удалось загрузить изображение. Проверьте формат и размер файла.')
+            } finally {
+              event.currentTarget.value = ''
+            }
+          }} />
+          <button className={toolButtonClass} type="button" title="Разрыв страницы" aria-label="Разрыв страницы" disabled={!editable} onClick={() => editor.chain().focus().insertContent({ type: 'pageBreak' }).run()}>↵</button>
+          {editor.isActive('table') && <details className="relative"><summary className="grid h-8 cursor-pointer list-none place-items-center rounded-control px-2 text-xs font-semibold hover:bg-[#f1f3f5]">Таблица ⋯</summary><div className="absolute left-0 top-[calc(100%+7px)] z-40 grid w-[190px] rounded-[7px] border border-[#d3d7dc] bg-white p-1.5 shadow-popover"><button className="rounded px-2 py-1.5 text-left text-xs hover:bg-[#f1f3f5]" type="button" onClick={() => editor.chain().focus().addRowBefore().run()}>Добавить строку выше</button><button className="rounded px-2 py-1.5 text-left text-xs hover:bg-[#f1f3f5]" type="button" onClick={() => editor.chain().focus().addRowAfter().run()}>Добавить строку ниже</button><button className="rounded px-2 py-1.5 text-left text-xs hover:bg-[#f1f3f5]" type="button" onClick={() => editor.chain().focus().deleteRow().run()}>Удалить строку</button><button className="rounded px-2 py-1.5 text-left text-xs hover:bg-[#f1f3f5]" type="button" onClick={() => editor.chain().focus().addColumnBefore().run()}>Добавить столбец слева</button><button className="rounded px-2 py-1.5 text-left text-xs hover:bg-[#f1f3f5]" type="button" onClick={() => editor.chain().focus().addColumnAfter().run()}>Добавить столбец справа</button><button className="rounded px-2 py-1.5 text-left text-xs hover:bg-[#f1f3f5]" type="button" onClick={() => editor.chain().focus().deleteColumn().run()}>Удалить столбец</button><button className="rounded px-2 py-1.5 text-left text-xs text-app-danger hover:bg-[#fff1f1]" type="button" onClick={() => editor.chain().focus().deleteTable().run()}>Удалить таблицу</button></div></details>}
         </div>
         <div className={cn(toolGroupClass, 'ml-auto')}>
           <button className={toolButtonClass} type="button" title="Отменить (⌘Z)" aria-label="Отменить" disabled={!editable || !editor.can().chain().focus().undo().run()} onClick={() => editor.chain().focus().undo().run()}>↶</button>
           <button className={toolButtonClass} type="button" title="Повторить (⇧⌘Z)" aria-label="Повторить" disabled={!editable || !editor.can().chain().focus().redo().run()} onClick={() => editor.chain().focus().redo().run()}>↷</button>
         </div>
       </div>
-      <div className="flex min-w-0 justify-center overflow-x-auto px-6 pb-24 pt-7">
-        <EditorContent className="document-theme" editor={editor} />
+      {assetUploadError && <p className="mx-4 my-0 text-sm text-app-danger" role="alert">{assetUploadError}</p>}
+      <div ref={canvasViewportRef} className="workbench-canvas flex min-w-0 justify-center overflow-x-auto px-6 pb-24 pt-7 max-[760px]:justify-start max-[760px]:px-3">
+        <div className="origin-top" style={{ ...editorThemeStyle, zoom: zoom / 100 }}>
+          <EditorContent className="document-theme" editor={editor} />
+        </div>
       </div>
+      <footer className="workbench-footer fixed bottom-0 z-20 flex min-h-9 items-center justify-between gap-4 border-t border-app-border bg-white px-4 text-xs text-app-muted max-[1279px]:pr-[380px] max-[760px]:pr-4" aria-label="Состояние редактора">
+        <span>Страница документа · {selectedPage}{landscape ? ' альбомная' : ' книжная'}</span>
+        <span>{editable ? 'Изменения сохраняются автоматически' : 'Только просмотр'}</span>
+        <span className="flex items-center gap-1"><button className="grid h-6 w-6 place-items-center rounded border-0 bg-transparent text-app-text hover:bg-[#f1f3f5]" type="button" onClick={() => setZoom((value) => Math.max(50, value - 10))} aria-label="Уменьшить масштаб">−</button><span className="min-w-10 text-center">{zoom}%</span><button className="grid h-6 w-6 place-items-center rounded border-0 bg-transparent text-app-text hover:bg-[#f1f3f5]" type="button" onClick={() => setZoom((value) => Math.min(150, value + 10))} aria-label="Увеличить масштаб">+</button></span>
+      </footer>
     </div>
   )
 }

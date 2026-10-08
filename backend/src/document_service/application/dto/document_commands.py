@@ -10,3 +10,9 @@ class CreateDocumentCommand:
     size_bytes: int
     owner_id: UUID
     content: bytes
+    style_version_id: UUID | None = None
+    source_language: str | None = None
+    target_language: str | None = None
+    translation_enabled: bool = False
+    style_settings: dict | None = None
+    glossary_version_id: str | None = None

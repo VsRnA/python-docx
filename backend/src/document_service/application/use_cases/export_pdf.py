@@ -36,6 +36,7 @@ class ExportPdf:
             title=document.title,
             theme_id=version.theme_id,
             theme_version=version.theme_version,
+            style_settings=document.style_settings,
         )
         key = f"documents/{document.id}/exports/revision-{version.revision}.pdf"
         stored = await self._storage.put(key=key, content=pdf, content_type="application/pdf")

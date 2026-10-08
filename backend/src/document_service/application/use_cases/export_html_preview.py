@@ -36,6 +36,7 @@ class ExportHtmlPreview:
             title=document.title,
             theme_id=version.theme_id,
             theme_version=version.theme_version,
+            style_settings=document.style_settings,
         )
         key = f"documents/{document.id}/previews/revision-{version.revision}.html"
         stored = await self._storage.put(key=key, content=bundled_html, content_type="text/html; charset=utf-8")

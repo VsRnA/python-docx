@@ -10,6 +10,8 @@ from document_service.application.ports.document_source_file_repository import (
 from document_service.application.ports.job_queue import DocumentJobQueue
 from document_service.application.ports.job_repository import JobRepository
 from document_service.application.ports.object_storage import ObjectStorage
+from document_service.application.ports.processing_profile_repository import ProcessingProfileRepository
+from document_service.domain.entities.processing_profile import ProcessingProfile
 from document_service.domain.entities.document import Document
 from document_service.domain.entities.document_source_file import DocumentSourceFile
 from document_service.domain.entities.job import Job
@@ -29,6 +31,12 @@ class CreateMergedDocumentCommand:
     owner_id: UUID
     files: list[MergeUpload]
     merge_notes: str | None = None
+    style_version_id: UUID | None = None
+    source_language: str | None = None
+    target_language: str | None = None
+    translation_enabled: bool = False
+    style_settings: dict | None = None
+    glossary_version_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +57,7 @@ class CreateMergedDocument:
         *,
         max_size_bytes: int,
         max_files: int = 5,
+        profiles: ProcessingProfileRepository | None = None,
     ) -> None:
         self._documents = documents
         self._source_files = source_files
@@ -57,6 +66,7 @@ class CreateMergedDocument:
         self._jobs = jobs
         self._max_size_bytes = max_size_bytes
         self._max_files = max_files
+        self._profiles = profiles
 
     async def execute(self, command: CreateMergedDocumentCommand) -> MergedDocumentCreated:
         self._validate(command)
@@ -66,6 +76,8 @@ class CreateMergedDocument:
             source_filename="merged.docx",
             source_size_bytes=total_size,
             owner_id=command.owner_id,
+            style_version_id=command.style_version_id,
+            style_settings=command.style_settings or {},
         )
         source_entities: list[DocumentSourceFile] = []
         for position, file in enumerate(command.files, start=1):
@@ -94,6 +106,17 @@ class CreateMergedDocument:
         document.processing_job_id = job.id
         await self._documents.add(document)
         await self._source_files.add_many(source_entities)
+        if command.style_version_id is not None:
+            if self._profiles is None:
+                raise RuntimeError("Processing profile repository is required when a style is selected")
+            await self._profiles.add(ProcessingProfile(
+                document_id=document.id,
+                style_version_id=command.style_version_id,
+                source_language=command.source_language,
+                target_language=command.target_language,
+                translation_enabled=command.translation_enabled,
+                glossary_version_id=command.glossary_version_id,
+            ))
         await self._jobs.add(job)
         await self._queue.enqueue_merge_processing(document.id, job.id)
         return MergedDocumentCreated(

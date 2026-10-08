@@ -17,6 +17,9 @@ class DocumentDetails:
     source_size_bytes: int
     status: DocumentStatus
     current_revision: int
+    processing_job_id: UUID | None
+    style_version_id: UUID | None
+    style_settings: dict
     html: str | None
     astra_html: str | None
     theme_id: str | None
@@ -54,6 +57,9 @@ class GetDocument:
             source_size_bytes=document.source_size_bytes,
             status=document.status,
             current_revision=document.current_revision,
+            processing_job_id=document.processing_job_id,
+            style_version_id=document.style_version_id,
+            style_settings=document.style_settings,
             html=version.html if version else None,
             astra_html=initial_version.astra_html if initial_version else None,
             theme_id=version.theme_id if version else None,

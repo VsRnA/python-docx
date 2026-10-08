@@ -16,6 +16,8 @@ class Document:
     current_revision: int = 0
     source_object_key: str | None = None
     processing_job_id: UUID | None = None
+    style_version_id: UUID | None = None
+    style_settings: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -51,7 +53,14 @@ class Document:
         if self.status is not DocumentStatus.PROCESSING:
             raise ValueError(f"Cannot complete document from status {self.status.value}")
         self.status = DocumentStatus.READY
-        self.current_revision = 1
+        if self.current_revision == 0:
+            self.current_revision = 1
+        self.updated_at = datetime.now(UTC)
+
+    def mark_translation(self) -> None:
+        if self.status is not DocumentStatus.READY:
+            raise ValueError(f"Cannot translate document from status {self.status.value}")
+        self.status = DocumentStatus.PROCESSING
         self.updated_at = datetime.now(UTC)
 
     def mark_failed(self) -> None:

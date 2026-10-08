@@ -7,6 +7,7 @@ from document_service.application.ports.document_version_repository import Docum
 from document_service.application.ports.object_storage import ObjectStorage
 from document_service.application.services.html_contract import HtmlContractValidator
 from document_service.application.services.asset_ingestor import AssetIngestor
+from document_service.application.services.style_theme import resolve_renderer_theme
 from document_service.domain.entities.document_version import DocumentVersion
 
 
@@ -23,6 +24,7 @@ class ProcessDocument:
         prompt_package_version: str,
         theme_id: str,
         theme_version: str,
+        custom_style_reference_pdf: bytes | None = None,
         max_asset_size_bytes: int = 25 * 1024 * 1024,
     ) -> None:
         self._documents = documents
@@ -34,6 +36,7 @@ class ProcessDocument:
         self._prompt_package_version = prompt_package_version
         self._theme_id = theme_id
         self._theme_version = theme_version
+        self._custom_style_reference_pdf = custom_style_reference_pdf
         self._max_asset_size_bytes = max_asset_size_bytes
         self._asset_ingestor = AssetIngestor(
             assets,
@@ -52,13 +55,18 @@ class ProcessDocument:
         await self._documents.update(document)
         try:
             source = await self._storage.get(key=document.source_object_key)
+            theme_id, theme_version = resolve_renderer_theme(
+                document.style_settings, self._theme_id, self._theme_version
+            )
             processed = await self._processor.process(
                 document_id=str(document.id),
                 filename=document.source_filename,
                 content=source,
                 prompt_package_version=self._prompt_package_version,
-                theme_id=self._theme_id,
-                theme_version=self._theme_version,
+                theme_id=theme_id,
+                theme_version=theme_version,
+                style_settings=document.style_settings,
+                custom_style_reference_pdf=self._custom_style_reference_pdf,
             )
             materialized = await self._asset_ingestor.ingest_variants(
                 document_id=document.id,

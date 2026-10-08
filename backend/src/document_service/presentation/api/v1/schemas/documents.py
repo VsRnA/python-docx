@@ -37,6 +37,10 @@ class DocumentDetailsResponse(BaseModel):
     source_size_bytes: int
     status: DocumentStatus
     current_revision: int
+    processing_job_id: UUID | None = None
+    style_version_id: UUID | None = None
+    style_settings: dict = Field(default_factory=dict)
+    processing_profile: dict | None = None
     html: str | None
     astra_html: str | None
     theme_id: str | None
@@ -74,6 +78,14 @@ class AiEditResponse(BaseModel):
     summary: str
 
 
+class AiEditProposalResponse(BaseModel):
+    base_revision: int
+    summary: str
+    before_html: str
+    after_html: str
+    operations: list[dict]
+
+
 class AiMessageResponse(BaseModel):
     id: UUID
     role: str
@@ -95,6 +107,7 @@ class PublicationListItem(BaseModel):
     url: str
     expires_in: int | None
     created_at: datetime
+    revoked_at: datetime | None = None
 
 
 class SaveDocumentRequest(BaseModel):
@@ -118,3 +131,34 @@ class ExportPdfResponse(BaseModel):
 class ExportHtmlPreviewResponse(BaseModel):
     url: str
     expires_in: int
+
+
+class DocumentOperationRequest(BaseModel):
+    operation_id: UUID
+    operation_type: str
+    block_id: str
+    payload: dict = Field(default_factory=dict)
+
+
+class ApplyOperationsRequest(BaseModel):
+    base_revision: int
+    operations: list[DocumentOperationRequest]
+
+
+class DocumentSnapshotResponse(BaseModel):
+    document_id: UUID
+    revision: int
+    metadata: dict
+    blocks: list[dict] = Field(default_factory=list)
+    layout: dict = Field(default_factory=dict)
+    comments: list[dict] = Field(default_factory=list)
+
+
+class DocumentCommentCreateRequest(BaseModel):
+    block_id: str | None = None
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class DocumentCommentUpdateRequest(BaseModel):
+    text: str | None = Field(default=None, min_length=1, max_length=4000)
+    status: str | None = None

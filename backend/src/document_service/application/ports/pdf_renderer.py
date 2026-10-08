@@ -9,6 +9,7 @@ class PdfRenderer(Protocol):
         title: str,
         theme_id: str,
         theme_version: str,
+        style_settings: dict | None = None,
     ) -> bytes: ...
 
     async def bundle_html(
@@ -18,4 +19,5 @@ class PdfRenderer(Protocol):
         title: str,
         theme_id: str,
         theme_version: str,
+        style_settings: dict | None = None,
     ) -> bytes: ...

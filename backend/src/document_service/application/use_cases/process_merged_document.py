@@ -12,6 +12,7 @@ from document_service.application.ports.object_storage import ObjectStorage
 from document_service.application.ports.pdf_renderer import PdfRenderer
 from document_service.application.services.asset_ingestor import AssetIngestor
 from document_service.application.services.asset_materializer import AssetMaterializer
+from document_service.application.services.style_theme import resolve_renderer_theme
 from document_service.application.services.html_contract import HtmlContractValidator
 from document_service.domain.entities.document_version import DocumentVersion
 
@@ -64,6 +65,9 @@ class ProcessMergedDocument:
         document.mark_processing()
         await self._documents.update(document)
         try:
+            theme_id, theme_version = resolve_renderer_theme(
+                document.style_settings, self._theme_id, self._theme_version
+            )
             merge_sources: list[MergeSource] = []
             await self._advance("loading_sources", 10)
             for source in sources:
@@ -83,8 +87,9 @@ class ProcessMergedDocument:
                 sources=merge_sources,
                 merge_notes=None,
                 prompt_package_version=self._prompt_package_version,
-                theme_id=self._theme_id,
-                theme_version=self._theme_version,
+                theme_id=theme_id,
+                theme_version=theme_version,
+                style_settings=document.style_settings,
             )
             await self._advance("materializing_assets", 70)
             materialized = await self._asset_ingestor.ingest_variants(
@@ -122,6 +127,7 @@ class ProcessMergedDocument:
                 title=document.title,
                 theme_id=merged.theme_id,
                 theme_version=merged.theme_version,
+                style_settings=document.style_settings,
             )
             key = f"documents/{document.id}/exports/revision-1.pdf"
             await self._advance("storing_pdf", 95)

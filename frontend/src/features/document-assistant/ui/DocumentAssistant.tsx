@@ -3,8 +3,12 @@ import { FormEvent, useEffect, useRef, useState } from 'react'
 
 import {
   editDocumentWithAi,
+  proposeDocumentAiEdit,
   getAiMessages,
   getDocument,
+  getDocumentSnapshot,
+  createDocumentComment,
+  updateDocumentComment,
   getDocumentVersions,
   restoreDocumentVersion,
   translateDocument,
@@ -37,6 +41,7 @@ interface DocumentAssistantProps {
   onAppliedBlocks?: (blockIds: string[]) => void
   onBusyChange?: (busy: boolean) => void
   onClose?: () => void
+  'data-panel'?: string
 }
 
 function aiErrorMessage(error: unknown): string {
@@ -98,17 +103,27 @@ export function DocumentAssistant({
   onAppliedBlocks,
   onBusyChange,
   onClose,
+  'data-panel': dataPanel,
 }: DocumentAssistantProps) {
   const queryClient = useQueryClient()
   const [instruction, setInstruction] = useState('')
   const [message, setMessage] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'ai' | 'versions'>('ai')
+  const [activeTab, setActiveTab] = useState<'ai' | 'versions' | 'comments'>('ai')
+  const [commentText, setCommentText] = useState('')
+  const [translationSource, setTranslationSource] = useState('auto')
+  const [translationTarget, setTranslationTarget] = useState('ru')
+  const [glossaryVersion, setGlossaryVersion] = useState('')
+  const [proposal, setProposal] = useState<{ summary: string; before_html: string; after_html: string } | null>(null)
   const [reviewingInstruction, setReviewingInstruction] = useState(false)
   const pendingBlockIdsRef = useRef<string[]>([])
   const retryingConflictRef = useRef(false)
   const versions = useQuery({
     queryKey: ['document-versions', documentId, revision],
     queryFn: () => getDocumentVersions(documentId),
+  })
+  const snapshot = useQuery({
+    queryKey: ['document-snapshot', documentId, revision],
+    queryFn: () => getDocumentSnapshot(documentId),
   })
   const conversation = useQuery({
     queryKey: ['document-ai-messages', documentId, revision],
@@ -143,6 +158,7 @@ export function DocumentAssistant({
     },
     onSuccess: async (result) => {
       setInstruction('')
+      setProposal(null)
       setReviewingInstruction(false)
       setMessage(retryingConflictRef.current
         ? result.summary || 'Изменения внесены после обновления версии документа'
@@ -152,8 +168,13 @@ export function DocumentAssistant({
     },
     onError: (error) => setMessage(aiErrorMessage(error)),
   })
+  const aiProposal = useMutation({
+    mutationFn: () => proposeDocumentAiEdit(documentId, revision, aiInstruction(instruction, selectionContext), selectionContext.blockIds),
+    onSuccess: (result) => setProposal(result),
+    onError: (error) => setMessage(aiErrorMessage(error)),
+  })
   const translation = useMutation({
-    mutationFn: () => translateDocument(documentId, revision, 'auto', 'ru'),
+    mutationFn: () => translateDocument(documentId, revision, translationSource, translationTarget, glossaryVersion.trim() || undefined),
     onSuccess: async (result) => {
       setMessage('Перевод добавлен как новая версия')
       await refresh(result.revision)
@@ -168,23 +189,33 @@ export function DocumentAssistant({
     },
     onError: () => setMessage('Не удалось восстановить версию.'),
   })
+  const comment = useMutation({
+    mutationFn: () => createDocumentComment(documentId, selectionContext.blockIds[0] || null, commentText.trim()),
+    onSuccess: () => setCommentText(''),
+  })
+  const resolveComment = useMutation({
+    mutationFn: (commentId: string) => updateDocumentComment(commentId, { status: 'resolved' }),
+    onSuccess: () => snapshot.refetch(),
+  })
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (instruction.trim() && canMutate) setReviewingInstruction(true)
   }
 
-  const busy = aiEdit.isPending || translation.isPending || restore.isPending
+  const busy = aiEdit.isPending || aiProposal.isPending || translation.isPending || restore.isPending
   useEffect(() => onBusyChange?.(busy), [busy, onBusyChange])
   return (
     <aside
-      className="sticky top-16 grid h-[calc(100vh-64px)] w-[360px] grid-rows-[48px_minmax(0,1fr)] overflow-hidden border-l border-[#d6dae0] bg-white max-[1279px]:h-[calc(100vh-64px)] max-[1279px]:w-[min(400px,calc(100vw-80px))]"
+      data-panel={dataPanel}
+      className="workbench-assistant sticky top-16 grid h-[calc(100vh-64px)] w-[360px] grid-rows-[48px_minmax(0,1fr)] overflow-hidden border-l border-[#d6dae0] bg-white max-[1279px]:h-[calc(100vh-64px)] max-[1279px]:w-[min(400px,calc(100vw-80px))]"
       aria-label="Помощник по документу"
     >
       <header className="flex items-center justify-between gap-2 border-b border-[#e0e3e7] py-[7px] pl-3.5 pr-2.5">
         <div className="flex h-[34px] gap-0.5" role="tablist" aria-label="Панель документа">
           <button className={tabClass} type="button" role="tab" aria-selected={activeTab === 'ai'} onClick={() => setActiveTab('ai')}>AI</button>
           <button className={tabClass} type="button" role="tab" aria-selected={activeTab === 'versions'} onClick={() => setActiveTab('versions')}>Версии</button>
+          <button className={tabClass} type="button" role="tab" aria-selected={activeTab === 'comments'} onClick={() => setActiveTab('comments')}>Комментарии</button>
         </div>
         <button className="min-w-8 cursor-pointer rounded-[5px] border-0 bg-transparent p-0 text-[21px] text-app-muted hover:bg-[#f0f2f4]" type="button" aria-label="Закрыть панель" title="Закрыть панель" onClick={onClose}>×</button>
       </header>
@@ -234,9 +265,7 @@ export function DocumentAssistant({
                 </small>
                 <div className="mt-3.5 flex justify-end gap-2">
                   <button className={secondaryButtonClass} type="button" disabled={aiEdit.isPending} onClick={() => setReviewingInstruction(false)}>Изменить</button>
-                  <button className={primaryButtonClass} type="button" disabled={!canMutate || aiEdit.isPending} onClick={() => aiEdit.mutate()}>
-                    {aiEdit.isPending ? 'Применение…' : 'Подтвердить правку'}
-                  </button>
+                  {proposal ? <div className="grid gap-2"><strong className="text-sm">{proposal.summary}</strong><div className="grid grid-cols-2 gap-2 text-xs"><div className="max-h-24 overflow-auto rounded bg-[#fff4f1] p-2 text-[#7e4437]">Было: {proposal.before_html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180)}…</div><div className="max-h-24 overflow-auto rounded bg-[#eff9f0] p-2 text-[#35623b]">Станет: {proposal.after_html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180)}…</div></div><div className="flex justify-end gap-2"><button className={secondaryButtonClass} type="button" onClick={() => setProposal(null)}>Изменить запрос</button><button className={primaryButtonClass} type="button" disabled={!canMutate || aiEdit.isPending} onClick={() => aiEdit.mutate()}>{aiEdit.isPending ? 'Применение…' : 'Применить изменение'}</button></div></div> : <button className={primaryButtonClass} type="button" disabled={!canMutate || aiProposal.isPending} onClick={() => aiProposal.mutate()}>{aiProposal.isPending ? 'Формирование…' : 'Сформировать предложение'}</button>}
                 </div>
               </section>
             ) : (
@@ -282,16 +311,21 @@ export function DocumentAssistant({
             {!canMutate && <p className="m-0 mt-[9px] text-xs leading-normal text-app-muted">Команда станет доступна после сохранения документа.</p>}
             {message && <p className="m-0 mt-[9px] rounded-control bg-[#f0f6ed] px-2.5 py-2 text-xs leading-normal text-app-muted">{message}</p>}
             {!reviewingInstruction && (
+              <>
               <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#e5e7ea] pt-3">
                 <span className="grid gap-0.5 text-xs"><strong>Перевод</strong><small className="text-[#747d86]">Создаст новую версию документа</small></span>
-                <button className={secondaryButtonClass} type="button" disabled={!canMutate || busy} onClick={() => translation.mutate()}>
-                  {translation.isPending ? 'Перевод…' : 'На русский'}
-                </button>
               </div>
+              <div className="grid gap-2">
+                <label className="grid gap-1 text-xs font-semibold text-app-muted">Исходный язык<select className="min-h-8 rounded-control border border-app-border bg-white px-2 text-sm font-normal" value={translationSource} onChange={(event) => setTranslationSource(event.target.value)}><option value="auto">Определить автоматически</option><option value="ru">Русский</option><option value="en">Английский</option><option value="zh">Китайский</option><option value="de">Немецкий</option></select></label>
+                <label className="grid gap-1 text-xs font-semibold text-app-muted">Язык перевода<select className="min-h-8 rounded-control border border-app-border bg-white px-2 text-sm font-normal" value={translationTarget} onChange={(event) => setTranslationTarget(event.target.value)}><option value="ru">Русский</option><option value="en">Английский</option><option value="zh">Китайский</option><option value="de">Немецкий</option><option value="fr">Французский</option></select></label>
+                <label className="grid gap-1 text-xs font-semibold text-app-muted">Версия глоссария (необязательно)<input className="min-h-8 rounded-control border border-app-border px-2 text-sm font-normal" value={glossaryVersion} onChange={(event) => setGlossaryVersion(event.target.value)} placeholder="например, ru-tech-v2" /></label>
+                <button className={secondaryButtonClass} type="button" disabled={!canMutate || busy} onClick={() => translation.mutate()}>{translation.isPending ? 'Перевод…' : 'Запустить перевод'}</button>
+              </div>
+              </>
             )}
           </div>
         </div>
-      ) : (
+      ) : activeTab === 'versions' ? (
         <section className="min-h-0 overflow-auto px-4 pb-5" role="tabpanel">
           <div className="sticky top-0 z-20 bg-white pb-3 pt-[18px]">
             <h2 className="m-0 mb-[5px] text-[15px] font-bold">История версий</h2>
@@ -319,6 +353,14 @@ export function DocumentAssistant({
               </li>
             ))}
           </ol>
+        </section>
+      ) : (
+        <section className="grid content-start gap-3 overflow-auto p-4" role="tabpanel">
+          <h2 className="m-0 text-[15px] font-bold">Комментарии</h2>
+          <p className="m-0 text-xs leading-normal text-app-muted">Добавьте комментарий к текущему выделению или блоку документа.</p>
+          {snapshot.data?.comments.length ? <div className="grid gap-2">{snapshot.data.comments.map((item) => <article className="rounded-[7px] bg-[#f4f5f6] p-3 text-sm" key={item.id}><p className="m-0">{item.text}</p><div className="mt-2 flex items-center justify-between gap-2"><small className="text-xs text-app-muted">{item.status === 'resolved' ? 'Решён' : 'Открыт'}</small>{item.status !== 'resolved' && <button className={secondaryButtonClass} type="button" disabled={resolveComment.isPending} onClick={() => resolveComment.mutate(item.id)}>Закрыть</button>}</div></article>)}</div> : <p className="m-0 rounded-[7px] bg-[#f8f9fa] p-3 text-xs text-app-muted">Комментариев пока нет.</p>}
+          <textarea className="min-h-24 resize-y rounded-[7px] border border-[#bbc2ca] px-3 py-2.5 text-sm" value={commentText} onChange={(event) => setCommentText(event.target.value)} placeholder="Напишите комментарий" />
+          <button className={primaryButtonClass} type="button" disabled={!commentText.trim() || comment.isPending} onClick={() => comment.mutate()}>{comment.isPending ? 'Сохранение…' : 'Добавить комментарий'}</button>
         </section>
       )}
     </aside>
