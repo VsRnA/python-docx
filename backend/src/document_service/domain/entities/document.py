@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from document_service.domain.value_objects.document_metadata import PipelineMetadata, StyleSettings
 from document_service.domain.value_objects.document_status import DocumentStatus
 
 
@@ -17,7 +18,10 @@ class Document:
     source_object_key: str | None = None
     processing_job_id: UUID | None = None
     style_version_id: UUID | None = None
-    style_settings: dict = field(default_factory=dict)
+    style_settings: StyleSettings = field(default_factory=dict)
+    pipeline_metadata: PipelineMetadata = field(default_factory=dict)
+    source_sha256: str | None = None
+    style_reference_sha256: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -32,7 +36,7 @@ class Document:
             raise ValueError("Source file must not be empty")
 
     def mark_queued(self) -> None:
-        if self.status is not DocumentStatus.UPLOADED:
+        if self.status not in {DocumentStatus.UPLOADED, DocumentStatus.PROCESSING_FAILED}:
             raise ValueError(f"Cannot queue document from status {self.status.value}")
         self.status = DocumentStatus.QUEUED
         self.updated_at = datetime.now(UTC)
@@ -77,7 +81,11 @@ class Document:
         self.updated_at = datetime.now(UTC)
 
     def archive(self) -> None:
-        if self.status in {DocumentStatus.UPLOADED, DocumentStatus.QUEUED, DocumentStatus.PROCESSING}:
+        if self.status in {
+            DocumentStatus.UPLOADED,
+            DocumentStatus.QUEUED,
+            DocumentStatus.PROCESSING,
+        }:
             raise ValueError("A document being processed cannot be archived")
         self.status = DocumentStatus.ARCHIVED
         self.updated_at = datetime.now(UTC)

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from document_service.application.ports.document_repository import DocumentRepository
@@ -48,7 +49,10 @@ class SaveDocument:
         if current_version is None:
             raise ValueError("Document has no current version")
         next_revision = base_revision + 1
-        await self._versions.add(
+        document.current_revision = next_revision
+        document.updated_at = datetime.now(UTC)
+        saved = await self._documents.save_version_atomically(
+            document,
             DocumentVersion(
                 document_id=document.id,
                 revision=next_revision,
@@ -57,8 +61,8 @@ class SaveDocument:
                 theme_version=current_version.theme_version,
                 created_by=owner_id,
                 reason=reason,
-            )
+            ),
         )
-        document.current_revision = next_revision
-        await self._documents.update(document)
+        if not saved:
+            raise RevisionConflictError("Document revision changed while saving")
         return next_revision

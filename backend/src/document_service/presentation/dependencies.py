@@ -1,13 +1,18 @@
-from collections.abc import AsyncIterator
 import asyncio
+import secrets
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Annotated
 from uuid import NAMESPACE_URL, UUID, uuid5
-import secrets
 
 import jwt
 from fastapi import Depends, Header, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBasic,
+    HTTPBasicCredentials,
+    HTTPBearer,
+)
 from jwt import PyJWKClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +25,13 @@ basic = HTTPBasic(auto_error=False)
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with async_session_factory() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        else:
+            await session.commit()
 
 
 @lru_cache

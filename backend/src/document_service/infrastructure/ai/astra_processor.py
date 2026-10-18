@@ -1,55 +1,62 @@
 import asyncio
 import base64
 import json
+import logging
 import re
-import mimetypes
+from contextlib import suppress
+from dataclasses import dataclass
 from hashlib import sha256
-from io import BytesIO
-from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
-from xml.etree import ElementTree
-from zipfile import BadZipFile, ZipFile
 
 from openai import OpenAI
-from pydantic import ValidationError
 
-from document_service.application.ports.document_ai_editor import (
-    ChangeOperation,
-    DocumentChangeSet,
-)
-from document_service.application.ports.document_converter import DocumentPdfConverter
 from document_service.application.ports.document_merger import (
     DocumentMerger,
-    MergeSource,
     MergedDocumentResult,
+    MergeSource,
 )
 from document_service.application.ports.document_processor import (
+    AstraContractError,
+    AstraRequestError,
+    AstraResponseAudit,
     ProcessedAsset,
     ProcessedDocument,
 )
-from document_service.application.services.html_contract import HtmlContractValidator
-from document_service.infrastructure.ai.contracts import (
-    AstraChangeSetResponse,
-    AstraFullDocumentResponse,
+from document_service.application.services.html_contract import (
+    HtmlContractValidator,
+    normalize_html,
+    normalize_model_html,
 )
-from document_service.infrastructure.ai.prompt_package import PromptPackageLoader
+from document_service.domain.value_objects.document_metadata import StyleSettings
+from document_service.infrastructure.ai.docx_assets import DocxAssetExtractor
+from document_service.infrastructure.ai.image_rasterizer import prepare_image_for_ai
 from document_service.infrastructure.config.settings import Settings
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class AstraDocumentRequest:
+    content: bytes
+    style_reference_pdf: bytes
+    style_prompt: str
+    source_assets: list[ProcessedAsset]
 
 
 class OpenAIAstraDocumentProcessor:
     def __init__(
         self,
         settings: Settings,
-        prompt_root: Path,
-        *,
-        source_pdf_converter: DocumentPdfConverter | None = None,
     ) -> None:
-        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._client = OpenAI(
+            api_key=settings.openai_api_key,
+            timeout=settings.astra_request_timeout_seconds,
+            max_retries=0,
+        )
         self._model = settings.astra_model
-        self._prompts = PromptPackageLoader(prompt_root)
-        self._source_pdf_converter = source_pdf_converter
-        self._style_reference_pdf_path = Path(settings.style_reference_pdf_path)
-        self._style_reference_overview_dir = Path(settings.style_reference_overview_dir)
+        self._reasoning_effort = settings.astra_reasoning_effort
+        self._edit_reasoning_effort = settings.astra_edit_reasoning_effort
+        self._repair_reasoning_effort = settings.astra_repair_reasoning_effort
+        self._repair_timeout_seconds = settings.astra_repair_timeout_seconds
         self._max_ai_file_input_bytes = settings.max_ai_file_input_bytes
 
     async def process(
@@ -58,67 +65,49 @@ class OpenAIAstraDocumentProcessor:
         document_id: str,
         filename: str,
         content: bytes,
-        prompt_package_version: str,
         theme_id: str,
         theme_version: str,
-        style_settings: dict | None = None,
-        custom_style_reference_pdf: bytes | None = None,
+        style_settings: StyleSettings | None = None,
+        custom_style_reference_pdf: bytes,
     ) -> ProcessedDocument:
-        if self._source_pdf_converter is None:
-            raise RuntimeError("A DOCX-to-PDF converter is required for initial document import")
-        package = self._prompts.load_full_document(prompt_package_version)
-        source_assets = self._extract_docx_assets(document_id, content)
-        source_pdf = await self._source_pdf_converter.convert_docx(
-            filename=filename,
-            content=content,
-        )
-        style_reference_pdf = custom_style_reference_pdf or self._read_style_reference_pdf()
-        style_overviews = self._read_style_overviews()
-        raw = await asyncio.to_thread(
+        source_assets = DocxAssetExtractor().extract(document_id, content)
+        if custom_style_reference_pdf is None:
+            raise ValueError("A style reference PDF from object storage is required for Astra processing")
+        style_reference_pdf = custom_style_reference_pdf
+        style_prompt = self._read_style_prompt(style_settings or {})
+        if not style_prompt or not style_prompt.strip():
+            raise ValueError("A style prompt is required for Astra document processing")
+        raw_model_response = await asyncio.to_thread(
             self._request,
-            filename,
-            content,
-            source_pdf,
-            style_reference_pdf,
-            style_overviews,
-            document_id,
-            package.system,
-            package.task,
-            package.schema,
-            package.components,
-            package.classes,
-            theme_id,
-            theme_version,
-            style_settings or {},
-            source_assets,
+            AstraDocumentRequest(
+                content=content,
+                style_reference_pdf=style_reference_pdf,
+                style_prompt=style_prompt,
+                source_assets=source_assets,
+            ),
         )
-        payload = AstraFullDocumentResponse.model_validate_json(raw)
-        if payload.document.document_id != document_id:
-            raise RuntimeError("GPT Astra 6 returned another document identifier")
-        if payload.document.theme_id != theme_id or payload.document.theme_version != theme_version:
-            raise RuntimeError("GPT Astra 6 returned an unrequested document theme")
+        html = self._extract_html_response(raw_model_response)
+        self._validate_full_document_html(html, HtmlContractValidator(None))
+        source_digest = sha256(content).hexdigest()
+        style_reference_digest = sha256(style_reference_pdf).hexdigest()
+        pipeline_metadata = {
+            "source_sha256": source_digest,
+            "style_prompt_sha256": sha256(style_prompt.encode("utf-8")).hexdigest(),
+            "style_reference_sha256": style_reference_digest,
+            "visual_comparison": "disabled_html_only_output",
+        }
         return ProcessedDocument(
-            html=payload.document.html,
-            astra_html=payload.document.html,
-            language=payload.document.language,
-            theme_id=payload.document.theme_id,
-            theme_version=payload.document.theme_version,
-            assets=source_assets + [
-                ProcessedAsset(
-                    external_id=asset.asset_id,
-                    filename=asset.filename,
-                    mime_type=asset.mime_type,
-                    base64_data=asset.data,
-                    width=asset.width,
-                    height=asset.height,
-                    alt=asset.alt,
-                )
-                for asset in payload.document.assets
-            ],
-            warnings=payload.warnings,
+            html=html,
+            astra_html=html,
+            language=self._detect_html_language(html),
+            theme_id=theme_id,
+            theme_version=theme_version,
+            assets=source_assets,
+            pipeline_metadata=pipeline_metadata,
+            response_audit=getattr(self, "_last_response_audit", None),
         )
 
-    async def edit(
+    async def edit_html(
         self,
         *,
         html: str,
@@ -126,122 +115,66 @@ class OpenAIAstraDocumentProcessor:
         base_revision: int,
         block_hashes: dict[str, str],
         target_block_ids: list[str] | None,
-        prompt_package_version: str,
+        target_kind: str,
+        target_asset_id: str | None,
+        selected_text: str | None,
         theme_id: str,
         theme_version: str,
-    ) -> DocumentChangeSet:
-        package = self._prompts.load_change_set(prompt_package_version)
-        raw = await asyncio.to_thread(
-            self._request_change_set,
+        style_prompt: str,
+        style_reference_pdf: bytes,
+    ) -> tuple[str, str]:
+        raw_model_response = await asyncio.to_thread(
+            self._request_html_edit,
             html,
             instruction,
             base_revision,
             block_hashes,
             target_block_ids,
-            package.system,
-            package.task,
-            package.schema,
-            package.components,
-            package.classes,
+            target_kind,
+            target_asset_id,
+            selected_text,
             theme_id,
             theme_version,
+            style_prompt,
+            style_reference_pdf,
         )
-        payload = AstraChangeSetResponse.model_validate_json(raw).change_set
-        return DocumentChangeSet(
-            base_revision=payload.base_revision,
-            summary=payload.summary,
-            operations=[
-                ChangeOperation(
-                    operation=item.operation,
-                    block_id=item.block_id,
-                    expected_hash=item.expected_hash,
-                    html=item.html,
-                )
-                for item in payload.operations
-            ],
-            assets=[
-                ProcessedAsset(
-                    external_id=item.asset_id,
-                    filename=item.filename,
-                    mime_type=item.mime_type,
-                    base64_data=item.data,
-                    width=item.width,
-                    height=item.height,
-                    alt=item.alt,
-                )
-                for item in payload.assets
-            ],
+        HtmlContractValidator(None).validate(raw_model_response)
+        return raw_model_response, "AI подготовил предложение изменений"
+
+    async def edit_image(
+        self,
+        *,
+        image: bytes,
+        mime_type: str,
+        filename: str,
+        instruction: str,
+        style_prompt: str,
+        style_reference_pdf: bytes,
+    ) -> bytes:
+        return await asyncio.to_thread(
+            self._request_image_edit,
+            image,
+            mime_type,
+            filename,
+            instruction,
+            style_prompt,
+            style_reference_pdf,
         )
 
-    def _request(
-        self,
-        filename: str,
-        content: bytes,
-        source_pdf: bytes,
-        style_reference_pdf: bytes,
-        style_overviews: list[tuple[str, str, bytes]],
-        document_id: str,
-        system: str,
-        task: str,
-        schema: str,
-        components: str,
-        classes: str,
-        theme_id: str,
-        theme_version: str,
-        style_settings: dict,
-        source_assets: list[ProcessedAsset],
-    ) -> str:
+    def _request(self, request: AstraDocumentRequest) -> str:
         file_inputs = [
-            ("SOURCE_DOCUMENT.docx", content),
-            ("SOURCE_RENDER.pdf", source_pdf),
-            ("STYLE_REFERENCE.pdf", style_reference_pdf),
+            ("SOURCE_DOCUMENT.docx", request.content),
+            ("STYLE_REFERENCE.pdf", request.style_reference_pdf),
         ]
         total_file_bytes = sum(len(data) for _, data in file_inputs)
         if total_file_bytes > self._max_ai_file_input_bytes:
             raise ValueError(
-                "Combined SOURCE_DOCUMENT, SOURCE_RENDER and STYLE_REFERENCE size "
+                "Combined SOURCE_DOCUMENT and STYLE_REFERENCE size "
                 f"({total_file_bytes} bytes) exceeds the configured OpenAI file-input limit "
                 f"({self._max_ai_file_input_bytes} bytes)"
             )
 
         uploaded_files = []
-        source_asset_manifest = "\n".join(
-            f"{index}. asset://{asset.external_id} ({asset.filename}, {asset.mime_type}, "
-            f"source pages: {', '.join(map(str, asset.source_pages)) or 'unknown'})"
-            for index, asset in enumerate(source_assets, start=1)
-        )
-        reference_digest = sha256(style_reference_pdf).hexdigest()[:16]
-        safe_settings = {}
-        if isinstance(style_settings.get("page"), str) and re.fullmatch(r"\s*(A4|A5|Letter)\s*(?:,\s*(portrait|landscape))?\s*", style_settings["page"], re.IGNORECASE):
-            safe_settings["page"] = style_settings["page"]
-        if style_settings.get("font") in {"Lato", "Arial", "Helvetica", "Inter"}:
-            safe_settings["font"] = style_settings["font"]
-        if isinstance(style_settings.get("accent"), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", style_settings["accent"]):
-            safe_settings["accent"] = style_settings["accent"]
-        margins = style_settings.get("margins")
-        if isinstance(margins, str):
-            values = re.findall(r"\d+(?:\.\d+)?", margins)
-            if len(values) == 3 and all(8 <= float(value) <= 40 for value in values):
-                safe_settings["margins"] = margins
-        prompt = (
-            f"{task}\n\nDocument id: {document_id}. Original filename: {filename}. "
-            f"Theme: {theme_id}@{theme_version}.\n"
-            f"User-approved style tokens: {json.dumps(safe_settings, ensure_ascii=False, sort_keys=True)}. Apply these values consistently to generated document classes.\n"
-            f"Style reference version: sha256:{reference_digest}.\n"
-            "Input roles are strict: SOURCE_DOCUMENT.docx and SOURCE_RENDER.pdf contain source "
-            "content. STYLE_REFERENCE.pdf and STYLE_OVERVIEW images contain visual guidance only. "
-            "Never copy content from the style reference.\n"
-            "The images following this instruction were extracted from the DOCX in their document "
-            "order. Place every supplied source image in the HTML at its corresponding location. "
-            "Reference it directly using its asset:// id. Do not copy source images into the JSON "
-            "assets array; that array is only for newly generated or flattened replacement "
-            "images.\n"
-            "Source image manifest:\n"
-            f"{source_asset_manifest or '(no supported embedded images)'}\n\n"
-            f"Approved component templates:\n{components}\n\n"
-            f"Approved CSS classes (one per line):\n{classes}\n\n"
-            f"Return JSON matching this schema exactly:\n{schema}"
-        )
         try:
             for upload_filename, upload_content in file_inputs:
                 uploaded_files.append(
@@ -250,331 +183,350 @@ class OpenAIAstraDocumentProcessor:
                         purpose="user_data",
                     )
                 )
-
             input_content: list[dict[str, object]] = [
-                {
-                    "type": "input_text",
-                    "text": "SOURCE_DOCUMENT.docx: authoritative text and editable structure.",
-                },
                 {"type": "input_file", "file_id": uploaded_files[0].id},
-                {
-                    "type": "input_text",
-                    "text": (
-                        "SOURCE_RENDER.pdf: authoritative visual rendering of the same source "
-                        "document, including pages, images, arrows and anchored labels."
-                    ),
-                },
-                {
-                    "type": "input_file",
-                    "file_id": uploaded_files[1].id,
-                    "detail": "high",
-                },
-                {
-                    "type": "input_text",
-                    "text": (
-                        "STYLE_REFERENCE.pdf: visual style only. Never reuse its text, facts, "
-                        "product names, images or page numbers."
-                    ),
-                },
-                {
-                    "type": "input_file",
-                    "file_id": uploaded_files[2].id,
-                    "detail": "high",
-                },
+                {"type": "input_file", "file_id": uploaded_files[1].id},
             ]
-            for overview_filename, overview_mime_type, overview_content in style_overviews:
+            for asset in request.source_assets:
+                if asset.mime_type not in {"image/png", "image/jpeg", "image/webp", "image/svg+xml"}:
+                    continue
+                asset_content = base64.b64decode(asset.base64_data)
+                asset_content, asset_mime_type = prepare_image_for_ai(asset_content, asset.mime_type, asset.filename)
                 input_content.extend(
                     [
                         {
-                            "type": "input_text",
-                            "text": (
-                                f"STYLE_OVERVIEW {overview_filename}: page-system overview only; "
-                                "never treat visible words or illustrations as source content."
-                            ),
-                        },
-                        {
                             "type": "input_image",
-                            "image_url": (
-                                f"data:{overview_mime_type};base64,"
-                                f"{base64.b64encode(overview_content).decode('ascii')}"
-                            ),
+                            "image_url": f"data:{asset_mime_type};base64,{base64.b64encode(asset_content).decode('ascii')}",
                             "detail": "high",
                         },
                     ]
                 )
-            input_content.append({"type": "input_text", "text": prompt})
-            for asset in source_assets:
-                input_content.extend(
-                    [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                f"Source image asset://{asset.external_id} ({asset.filename}); "
-                                f"DOCX pages: {', '.join(map(str, asset.source_pages)) or 'unknown'}"
-                            ),
-                        },
-                        {
-                            "type": "input_image",
-                            "image_url": (
-                                f"data:{asset.mime_type};base64,{asset.base64_data}"
-                            ),
-                            "detail": "high",
-                        },
-                    ]
-                )
+            input_content.append({"type": "input_text", "text": request.style_prompt})
             response = self._client.responses.create(
                 model=self._model,
-                instructions=system,
+                reasoning={"effort": self._reasoning_effort},
                 input=[
                     {
                         "role": "user",
                         "content": input_content,
                     }
                 ],
+                text={"format": {"type": "text"}},
             )
-            validator = HtmlContractValidator(set(classes.splitlines()))
-            return self._repair_until_valid(
-                response,
-                schema,
-                AstraFullDocumentResponse,
-                html_validator=lambda payload: self._validate_full_document_html(
-                    payload.document.html,
-                    validator,
-                    source_assets,
-                ),
+        except Exception as error:
+            for uploaded in uploaded_files:
+                with suppress(Exception):
+                    self._client.files.delete(uploaded.id)
+            audit = AstraResponseAudit(
+                response_id=None,
+                model=self._model,
+                reasoning_effort=self._reasoning_effort,
+                output_text=None,
+                status="error",
+                error_message=str(error),
             )
+            self._last_response_audit = audit
+            raise AstraRequestError(str(error), audit=audit) from error
+        audit = AstraResponseAudit(
+            response_id=getattr(response, "id", None),
+            model=self._model,
+            reasoning_effort=self._reasoning_effort,
+            output_text=getattr(response, "output_text", None),
+            status=getattr(response, "status", None) or "completed",
+            usage=self._serialize_usage(getattr(response, "usage", None)),
+        )
+        self._last_response_audit = audit
+        try:
+            return self._validate_html_response(response, audit)
         finally:
             for uploaded in uploaded_files:
-                try:
+                with suppress(Exception):
                     self._client.files.delete(uploaded.id)
-                except Exception:
-                    # Remote temporary-file cleanup must not invalidate a completed import.
-                    pass
+    @staticmethod
+    def _extract_html_response(raw_response: str | None) -> str:
+        html = (raw_response or "").strip()
+        if not html:
+            raise ValueError("OpenAI returned an empty HTML response")
+        if html.startswith("```"):
+            lines = html.splitlines()
+            if lines and lines[0].strip().lower() in {"```", "```html"}:
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            html = "\n".join(lines).strip()
+        if not re.search(r"<[a-z][a-z0-9-]*(?:\s|>)", html, flags=re.IGNORECASE):
+            raise ValueError("OpenAI response does not contain HTML")
+        return html
 
-    def _read_style_reference_pdf(self) -> bytes:
+    def _validate_html_response(self, response, audit: AstraResponseAudit) -> str:
+        raw_response = getattr(response, "output_text", None)
         try:
-            content = self._style_reference_pdf_path.read_bytes()
-        except FileNotFoundError as error:
-            raise RuntimeError(
-                f"Style reference PDF was not found: {self._style_reference_pdf_path}"
-            ) from error
-        if not content.startswith(b"%PDF-"):
-            raise RuntimeError(
-                f"Style reference is not a valid PDF: {self._style_reference_pdf_path}"
+            html = normalize_model_html(normalize_html(self._extract_html_response(raw_response)))
+            HtmlContractValidator(None).validate(html)
+            return html
+        except (ValueError, TypeError) as error:
+            invalid_audit = AstraResponseAudit(
+                response_id=audit.response_id,
+                model=audit.model,
+                reasoning_effort=audit.reasoning_effort,
+                output_text=audit.output_text,
+                status="invalid",
+                usage=audit.usage,
+                error_message=str(error),
+                created_at=audit.created_at,
             )
-        return content
+            self._last_response_audit = invalid_audit
+            try:
+                return self._repair_html_fragment(raw_response or "", str(error))
+            except Exception as repair_error:
+                raise AstraContractError(
+                    "GPT Astra 6 returned invalid HTML and the repair request also failed",
+                    raw_responses=[item for item in (raw_response, str(repair_error)) if item],
+                    validation_error=f"initial={error}; repair={repair_error}",
+                    audit=invalid_audit,
+                ) from repair_error
 
-    def _read_style_overviews(self) -> list[tuple[str, str, bytes]]:
-        if not self._style_reference_overview_dir.exists():
-            return []
-        overviews: list[tuple[str, str, bytes]] = []
-        for path in sorted(self._style_reference_overview_dir.iterdir()):
-            if not path.is_file():
-                continue
-            mime_type, _ = mimetypes.guess_type(path.name)
-            if mime_type not in {"image/jpeg", "image/png", "image/webp"}:
-                continue
-            overviews.append((path.name, mime_type, path.read_bytes()))
-        return overviews
-
-    @staticmethod
-    def _extract_docx_assets(document_id: str, content: bytes) -> list[ProcessedAsset]:
-        """Extract meaningful embedded images while keeping the DOCX as the primary AI input."""
-        try:
-            with ZipFile(BytesIO(content)) as archive:
-                media_names = [
-                    name
-                    for name in archive.namelist()
-                    if name.startswith("word/media/") and not name.endswith("/")
-                ]
-                ordered_media = OpenAIAstraDocumentProcessor._ordered_media_with_pages(
-                    archive, media_names
-                )
-                assets: list[ProcessedAsset] = []
-                for name, source_pages in ordered_media:
-                    image = archive.read(name)
-                    mime_type = OpenAIAstraDocumentProcessor._image_mime_type(name, image)
-                    # DOCX often contains hundreds of tiny DrawingML fragments. They are not
-                    # useful as standalone figures and overwhelm multimodal requests.
-                    if mime_type is None or len(image) < 2_048:
-                        continue
-                    filename = Path(name).name
-                    asset_id = str(uuid5(NAMESPACE_URL, f"{document_id}|{name}"))
-                    assets.append(
-                        ProcessedAsset(
-                            external_id=asset_id,
-                            filename=filename,
-                            mime_type=mime_type,
-                            base64_data=base64.b64encode(image).decode("ascii"),
-                            alt=(
-                                "Изображение из исходного документа: "
-                                f"{filename}"
-                            ),
-                            source_pages=tuple(source_pages),
-                        )
-                    )
-                return assets
-        except (BadZipFile, KeyError, ElementTree.ParseError):
-            return []
-
-    @staticmethod
-    def _ordered_media_with_pages(
-        archive: ZipFile, media_names: list[str]
-    ) -> list[tuple[str, list[int]]]:
-        rels_name = "word/_rels/document.xml.rels"
-        document_name = "word/document.xml"
-        if rels_name not in archive.namelist() or document_name not in archive.namelist():
-            return [(name, []) for name in sorted(media_names)]
-
-        relationships = ElementTree.fromstring(archive.read(rels_name))
-        rel_targets = {
-            relation.attrib.get("Id", ""): relation.attrib.get("Target", "")
-            for relation in relationships
-        }
-        document = ElementTree.fromstring(archive.read(document_name))
-        relationship_attribute = (
-            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+    def _repair_html_fragment(self, html: str, validation_error: str) -> str:
+        logger.info("Astra HTML repair started validation_error=%s", validation_error)
+        response = self._client.with_options(timeout=self._repair_timeout_seconds).responses.create(
+            model=self._model,
+            reasoning={"effort": self._repair_reasoning_effort},
+            instructions=(
+                "You repair HTML for a strict editable-document contract. Return only the corrected "
+                "HTML fragment rooted in <article>. Preserve all text, images, links, tables and "
+                "meaningful structure. Do not invent content. Remove or replace the violating "
+                "construct. Never use <script>, <template>, <form>, <iframe>, <object>, <embed>, "
+                "<applet>, <base>, event-handler attributes, external stylesheets or unsafe URLs."
+            ),
+            input=(
+                "Validation error:\n"
+                f"{validation_error}\n\n"
+                "HTML to repair:\n"
+                f"{html}"
+            ),
+            text={"format": {"type": "text"}},
         )
-        ordered: list[str] = []
-        pages_by_name: dict[str, list[int]] = {}
-        page_number = 1
-        for element in document.iter():
-            local_name = element.tag.rsplit("}", 1)[-1]
-            if local_name == "lastRenderedPageBreak":
-                page_number += 1
-                continue
-            relation_id = element.attrib.get(relationship_attribute)
-            target = rel_targets.get(relation_id or "", "")
-            if not target:
-                continue
-            normalized = f"word/{target.lstrip('/')}" if not target.startswith("word/") else target
-            normalized = normalized.replace("word/../", "")
-            if normalized in media_names:
-                if normalized not in ordered:
-                    ordered.append(normalized)
-                pages = pages_by_name.setdefault(normalized, [])
-                if page_number not in pages:
-                    pages.append(page_number)
-        ordered.extend(name for name in sorted(media_names) if name not in ordered)
-        return [(name, pages_by_name.get(name, [])) for name in ordered]
+        repaired = self._extract_html_response(getattr(response, "output_text", None))
+        HtmlContractValidator(None).validate(repaired)
+        logger.info("Astra HTML repair completed bytes=%s", len(repaired.encode("utf-8")))
+        return repaired
+
+    @staticmethod
+    def _detect_html_language(html: str) -> str:
+        match = re.search(r"\blang\s*=\s*['\"]([a-zA-Z-]+)['\"]", html)
+        return match.group(1) if match else "ru"
+
+    def _read_style_prompt(self, style_settings: StyleSettings) -> str | None:
+        prompt = style_settings.get("style_prompt")
+        if isinstance(prompt, str) and prompt.strip():
+            return prompt
+        return None
 
     @staticmethod
     def _validate_full_document_html(
         html: str,
         validator: HtmlContractValidator,
-        source_assets: list[ProcessedAsset],
     ) -> None:
-        """Keep model-selected composition, but require complete source-asset coverage."""
         validator.validate(html)
-        missing = [
-            asset.external_id
-            for asset in source_assets
-            if f"asset://{asset.external_id}" not in html
-        ]
-        if missing:
-            raise ValueError(
-                "The HTML omits source assets: " + ", ".join(missing[:20])
-            )
 
-    @staticmethod
-    def _image_mime_type(filename: str, content: bytes) -> str | None:
-        if content.startswith(b"\x89PNG\r\n\x1a\n"):
-            return "image/png"
-        if content.startswith(b"\xff\xd8\xff"):
-            return "image/jpeg"
-        if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
-            return "image/webp"
-        guessed, _ = mimetypes.guess_type(filename)
-        return guessed if guessed in {"image/png", "image/jpeg", "image/webp"} else None
-
-    def _request_change_set(
+    def _request_html_edit(
         self,
         html: str,
         instruction: str,
         base_revision: int,
         block_hashes: dict[str, str],
         target_block_ids: list[str] | None,
-        system: str,
-        task: str,
-        schema: str,
-        components: str,
-        classes: str,
+        target_kind: str,
+        target_asset_id: str | None,
+        selected_text: str | None,
         theme_id: str,
         theme_version: str,
+        style_prompt: str,
+        style_reference_pdf: bytes,
     ) -> str:
         request_payload = {
             "base_revision": base_revision,
             "theme_id": theme_id,
             "theme_version": theme_version,
             "instruction": instruction,
-            "block_hashes": block_hashes,
             "target_block_ids": target_block_ids or [],
+            "target_kind": target_kind,
+            "target_asset_id": target_asset_id,
+            "selected_text": selected_text,
+            "block_hashes": block_hashes,
             "html": html,
         }
-        response = self._client.responses.create(
-            model=self._model,
-            instructions=system,
-            input=(
-                f"{task}\n\nRequest:\n{json.dumps(request_payload, ensure_ascii=False)}"
-                f"\n\nApproved component templates:\n{components}"
-                f"\n\nApproved CSS classes (one per line):\n{classes}"
-                f"\n\nReturn JSON matching this schema exactly:\n{schema}"
-            ),
-        )
-        validator = HtmlContractValidator(set(classes.splitlines()))
-
-        def validate_changes(payload: AstraChangeSetResponse) -> None:
-            for operation in payload.change_set.operations:
-                if operation.html:
-                    validator.validate(operation.html)
-
-        return self._repair_until_valid(
-            response,
-            schema,
-            AstraChangeSetResponse,
-            html_validator=validate_changes,
-        )
-
-    def _repair_until_valid(self, response, schema: str, contract_type, html_validator=None) -> str:
-        for attempt in range(3):
-            if not response.output_text:
-                validation_error = "The response was empty."
-            else:
-                try:
-                    json.loads(response.output_text)
-                    payload = contract_type.model_validate_json(response.output_text)
-                    if html_validator:
-                        html_validator(payload)
-                    return response.output_text
-                except (json.JSONDecodeError, ValidationError, ValueError) as error:
-                    validation_error = str(error)
-            if attempt == 2:
-                break
+        inline_svg_instruction = ""
+        if target_kind == "image" and (target_asset_id or "").startswith("inline-svg:"):
+            inline_svg_index = (target_asset_id or "").split(":", 1)[1]
+            inline_svg_instruction = (
+                f" The selected image is the inline SVG at zero-based index {inline_svg_index} inside the selected block. "
+                "Change only that SVG; "
+                "preserve every other SVG, all text, layout and assets."
+            )
+        uploaded_reference = None
+        try:
+            uploaded_reference = self._client.files.create(
+                file=("STYLE_REFERENCE.pdf", style_reference_pdf),
+                purpose="user_data",
+            )
             response = self._client.responses.create(
                 model=self._model,
-                previous_response_id=response.id,
-                input=(
-                    "Repair your previous response. Return only valid JSON and do not change valid "
-                    f"document content. Validation error:\n{validation_error}\nSchema:\n{schema}"
+                reasoning={"effort": self._edit_reasoning_effort},
+                instructions=(
+                    "Edit the supplied HTML according to the user instruction and selected style. "
+                    "Return only the complete resulting HTML document. "
+                    "Preserve every unchanged block and all stable data-block-id/data-b attributes. "
+                    "If target_kind is text, change only the selected text inside its block. "
+                    "If target_kind is block, change only the selected blocks. "
+                    "If target_kind is document, the whole document may be changed. "
+                    f"{inline_svg_instruction} "
+                    "Do not return a diff."
                 ),
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    f"Edit request:\n{json.dumps(request_payload, ensure_ascii=False)}"
+                                    f"\n\nSelected style prompt:\n{style_prompt}"
+                                    "\n\nReturn only HTML."
+                                ),
+                            },
+                            {
+                                "type": "input_text",
+                                "text": "STYLE_REFERENCE.pdf: apply its visual language only.",
+                            },
+                            {"type": "input_file", "file_id": uploaded_reference.id, "detail": "high"},
+                        ],
+                    }
+                ],
             )
-        raise RuntimeError("GPT Astra 6 failed the response contract after two repair attempts")
+        finally:
+            if uploaded_reference is not None:
+                with suppress(Exception):
+                    self._client.files.delete(uploaded_reference.id)
+
+        return self._validate_html_response(response, self._response_audit(response, self._edit_reasoning_effort))
+
+    def _request_image_edit(
+        self,
+        image: bytes,
+        mime_type: str,
+        filename: str,
+        instruction: str,
+        style_prompt: str,
+        style_reference_pdf: bytes,
+    ) -> bytes:
+        image, mime_type = prepare_image_for_ai(image, mime_type, filename)
+        if mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+            raise ValueError("AI image editing supports SVG, PNG, JPEG and WebP images")
+        total_size = len(image) + len(style_reference_pdf)
+        if total_size > self._max_ai_file_input_bytes:
+            raise ValueError(
+                "Combined selected image and style reference size "
+                f"({total_size} bytes) exceeds the configured OpenAI file-input limit "
+                f"({self._max_ai_file_input_bytes} bytes)"
+            )
+        uploaded_reference = None
+        image_data_url = f"data:{mime_type};base64,{base64.b64encode(image).decode('ascii')}"
+        try:
+            uploaded_reference = self._client.files.create(
+                file=("STYLE_REFERENCE.pdf", style_reference_pdf),
+                purpose="user_data",
+            )
+            response = self._client.responses.create(
+                model=self._model,
+                reasoning={"effort": self._edit_reasoning_effort},
+                instructions=(
+                    "Edit only the supplied image according to the user instruction. "
+                    "Preserve the subject identity and useful details unless the instruction says otherwise. "
+                    "Use STYLE_REFERENCE.pdf and the selected style prompt only as visual guidance. "
+                    "Return one edited image through the image_generation tool; do not return HTML or text."
+                ),
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    f"Image filename: {filename}\n"
+                                    f"User instruction: {instruction}\n\n"
+                                    f"Selected style prompt:\n{style_prompt}\n\n"
+                                    "STYLE_REFERENCE.pdf is visual guidance only; do not copy its text or objects."
+                                ),
+                            },
+                            {"type": "input_image", "image_url": image_data_url, "detail": "high"},
+                            {"type": "input_file", "file_id": uploaded_reference.id},
+                        ],
+                    }
+                ],
+                tools=[
+                    {
+                        "type": "image_generation",
+                        "input_fidelity": "high",
+                        "output_format": "png",
+                        "quality": "high",
+                    }
+                ],
+            )
+            result = next(
+                (
+                    getattr(item, "result", None)
+                    for item in getattr(response, "output", [])
+                    if getattr(item, "type", None) == "image_generation_call"
+                ),
+                None,
+            )
+            if not result:
+                raise ValueError("GPT Astra 6 did not return an edited image")
+            try:
+                return base64.b64decode(result, validate=True)
+            except ValueError as error:
+                raise ValueError("GPT Astra 6 returned an invalid image result") from error
+        finally:
+            if uploaded_reference is not None:
+                with suppress(Exception):
+                    self._client.files.delete(uploaded_reference.id)
+
+    @staticmethod
+    def _serialize_usage(usage) -> dict[str, object]:
+        if usage is None:
+            return {}
+        if hasattr(usage, "model_dump"):
+            return usage.model_dump(mode="json")
+        if isinstance(usage, dict):
+            return usage
+        return {"repr": repr(usage)}
+
+    def _response_audit(self, response, reasoning_effort: str) -> AstraResponseAudit:
+        audit = AstraResponseAudit(
+            response_id=getattr(response, "id", None),
+            model=self._model,
+            reasoning_effort=reasoning_effort,
+            output_text=getattr(response, "output_text", None),
+            status=getattr(response, "status", None) or "completed",
+            usage=self._serialize_usage(getattr(response, "usage", None)),
+        )
+        self._last_response_audit = audit
+        return audit
 
 
 class OpenAIAstraDocumentMerger(DocumentMerger):
     def __init__(
         self,
         settings: Settings,
-        prompt_root: Path,
-        *,
-        source_pdf_converter: DocumentPdfConverter,
     ) -> None:
-        self._client = OpenAI(api_key=settings.openai_api_key)
+        self._client = OpenAI(
+            api_key=settings.openai_api_key,
+            timeout=settings.astra_request_timeout_seconds,
+            max_retries=0,
+        )
         self._model = settings.astra_model
-        self._prompts = PromptPackageLoader(prompt_root)
-        self._source_pdf_converter = source_pdf_converter
-        self._style_reference_pdf_path = Path(settings.style_reference_pdf_path)
-        self._style_reference_overview_dir = Path(settings.style_reference_overview_dir)
+        self._reasoning_effort = settings.astra_reasoning_effort
         self._max_ai_file_input_bytes = settings.max_ai_file_input_bytes
 
     async def merge(
@@ -583,18 +535,13 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
         document_id: str,
         sources: list[MergeSource],
         merge_notes: str | None,
-        prompt_package_version: str,
         theme_id: str,
         theme_version: str,
+        style_prompt: str,
+        style_reference_pdf: bytes,
     ) -> MergedDocumentResult:
-        package = self._prompts.load_merge_document(prompt_package_version)
-        rendered_sources: list[MergeSource] = []
         source_assets: list[ProcessedAsset] = []
         for source in sources:
-            rendered_pdf = await self._source_pdf_converter.convert_docx(
-                filename=source.filename,
-                content=source.content,
-            )
             assets = [
                 ProcessedAsset(
                     external_id=f"{source.source_file_id}-{asset.external_id}",
@@ -606,64 +553,31 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
                     alt=f"{asset.alt} ({source.filename})".strip(),
                     source_pages=asset.source_pages,
                 )
-                for asset in OpenAIAstraDocumentProcessor._extract_docx_assets(
+                for asset in DocxAssetExtractor().extract(
                     f"{document_id}|{source.source_file_id}",
                     source.content,
                 )
             ]
             source_assets.extend(assets)
-            rendered_sources.append(
-                MergeSource(
-                    source_file_id=source.source_file_id,
-                    filename=source.filename,
-                    content=source.content,
-                    rendered_pdf=rendered_pdf,
-                    position=source.position,
-                    assets=assets,
-                )
-            )
-        style_reference_pdf = self._read_style_reference_pdf()
-        style_overviews = self._read_style_overviews()
-        raw = await asyncio.to_thread(
+        raw_model_response = await asyncio.to_thread(
             self._request_merge,
             document_id,
-            rendered_sources,
+            sources,
             merge_notes,
+            style_prompt,
             style_reference_pdf,
-            style_overviews,
-            package.system,
-            package.task,
-            package.schema,
-            package.components,
-            package.classes,
             theme_id,
             theme_version,
             source_assets,
         )
-        payload = AstraFullDocumentResponse.model_validate_json(raw)
-        if payload.document.document_id != document_id:
-            raise RuntimeError("GPT Astra 6 returned another document identifier")
-        if payload.document.theme_id != theme_id or payload.document.theme_version != theme_version:
-            raise RuntimeError("GPT Astra 6 returned an unrequested document theme")
         return MergedDocumentResult(
-            html=payload.document.html,
-            astra_html=payload.document.html,
-            language=payload.document.language,
-            theme_id=payload.document.theme_id,
-            theme_version=payload.document.theme_version,
-            assets=source_assets + [
-                ProcessedAsset(
-                    external_id=asset.asset_id,
-                    filename=asset.filename,
-                    mime_type=asset.mime_type,
-                    base64_data=asset.data,
-                    width=asset.width,
-                    height=asset.height,
-                    alt=asset.alt,
-                )
-                for asset in payload.document.assets
-            ],
-            warnings=payload.warnings,
+            html=raw_model_response,
+            astra_html=raw_model_response,
+            language=OpenAIAstraDocumentProcessor._detect_html_language(raw_model_response),
+            theme_id=theme_id,
+            theme_version=theme_version,
+            assets=source_assets,
+            warnings=[],
         )
 
     def _request_merge(
@@ -671,13 +585,8 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
         document_id: str,
         sources: list[MergeSource],
         merge_notes: str | None,
+        style_prompt: str,
         style_reference_pdf: bytes,
-        style_overviews: list[tuple[str, str, bytes]],
-        system: str,
-        task: str,
-        schema: str,
-        components: str,
-        classes: str,
         theme_id: str,
         theme_version: str,
         source_assets: list[ProcessedAsset],
@@ -686,7 +595,6 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
         for source in sources:
             prefix = f"SOURCE_{source.position:02d}"
             file_inputs.append((f"{prefix}_{source.filename}", source.content))
-            file_inputs.append((f"{prefix}_RENDER.pdf", source.rendered_pdf))
         file_inputs.append(("STYLE_REFERENCE.pdf", style_reference_pdf))
         total_file_bytes = sum(len(data) for _, data in file_inputs)
         if total_file_bytes > self._max_ai_file_input_bytes:
@@ -698,8 +606,7 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
 
         uploaded_files = []
         source_manifest = "\n".join(
-            f"{source.position}. {source.filename} (source_file_id={source.source_file_id})"
-            for source in sources
+            f"{source.position}. {source.filename} (source_file_id={source.source_file_id})" for source in sources
         )
         source_asset_manifest = "\n".join(
             f"{index}. asset://{asset.external_id} ({asset.filename}, {asset.mime_type}, "
@@ -708,25 +615,27 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
         )
         reference_digest = sha256(style_reference_pdf).hexdigest()[:16]
         prompt = (
-            f"{task}\n\nDocument id: {document_id}. Theme: {theme_id}@{theme_version}.\n"
+            "Merge the supplied DOCX files into one coherent editable HTML manual. "
+            "Use the selected style prompt and STYLE_REFERENCE.pdf for visual language only. "
+            "Preserve source facts, text and images. Return only the complete HTML document.\n\n"
+            f"Document id: {document_id}. Theme: {theme_id}@{theme_version}.\n"
             f"Style reference version: sha256:{reference_digest}.\n"
-            "The user does not choose a merge strategy. GPT Astra 6 must decide the clean "
-            "final structure and produce a ready-to-render manual PDF layout through the "
-            "approved HTML contract.\n"
             f"User merge notes: {merge_notes or '(none)'}\n\n"
+            f"Selected style prompt from the published style:\n{style_prompt}\n\n"
             "Source files in user-provided order:\n"
             f"{source_manifest}\n\n"
-            "Input roles are strict: SOURCE files and SOURCE_RENDER PDFs contain source content. "
-            "STYLE_REFERENCE.pdf and STYLE_OVERVIEW images contain visual guidance only. Never "
+            "Input roles are strict: SOURCE DOCX files contain source content. "
+            "STYLE_REFERENCE.pdf contains visual guidance only. Never "
             "copy text, facts, product names, images or page numbers from the style reference.\n"
             "Use source image assets directly with their asset:// ids. Do not copy source images "
-            "into the JSON assets array; that array is only for newly generated or flattened "
-            "replacement images.\n"
+            "into the response as inline replacements.\n"
             "Source image manifest:\n"
-            f"{source_asset_manifest or '(no supported embedded images)'}\n\n"
-            f"Approved component templates:\n{components}\n\n"
-            f"Approved CSS classes (one per line):\n{classes}\n\n"
-            f"Return JSON matching this schema exactly:\n{schema}"
+            f"{source_asset_manifest or '(no supported embedded images)'}"
+        )
+        instructions = (
+            "Merge the user-provided DOCX files into one editable HTML document. "
+            "The style prompt and STYLE_REFERENCE.pdf are the only style sources. "
+            "Do not copy content from the reference PDF. Return only HTML."
         )
         try:
             for upload_filename, upload_content in file_inputs:
@@ -753,23 +662,6 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
                     ]
                 )
                 uploaded_index += 1
-                input_content.extend(
-                    [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                f"SOURCE_{source.position:02d}_RENDER.pdf: authoritative visual "
-                                f"rendering of {source.filename}."
-                            ),
-                        },
-                        {
-                            "type": "input_file",
-                            "file_id": uploaded_files[uploaded_index].id,
-                            "detail": "high",
-                        },
-                    ]
-                )
-                uploaded_index += 1
             input_content.extend(
                 [
                     {
@@ -786,26 +678,6 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
                     },
                 ]
             )
-            for overview_filename, overview_mime_type, overview_content in style_overviews:
-                input_content.extend(
-                    [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                f"STYLE_OVERVIEW {overview_filename}: page-system overview only; "
-                                "never treat visible words or illustrations as source content."
-                            ),
-                        },
-                        {
-                            "type": "input_image",
-                            "image_url": (
-                                f"data:{overview_mime_type};base64,"
-                                f"{base64.b64encode(overview_content).decode('ascii')}"
-                            ),
-                            "detail": "high",
-                        },
-                    ]
-                )
             input_content.append({"type": "input_text", "text": prompt})
             for asset in source_assets:
                 input_content.extend(
@@ -819,16 +691,15 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
                         },
                         {
                             "type": "input_image",
-                            "image_url": (
-                                f"data:{asset.mime_type};base64,{asset.base64_data}"
-                            ),
+                            "image_url": (f"data:{asset.mime_type};base64,{asset.base64_data}"),
                             "detail": "high",
                         },
                     ]
                 )
             response = self._client.responses.create(
                 model=self._model,
-                instructions=system,
+                reasoning={"effort": self._reasoning_effort},
+                instructions=instructions,
                 input=[
                     {
                         "role": "user",
@@ -836,27 +707,12 @@ class OpenAIAstraDocumentMerger(DocumentMerger):
                     }
                 ],
             )
-            validator = HtmlContractValidator(set(classes.splitlines()))
-            return OpenAIAstraDocumentProcessor._repair_until_valid(
+            return OpenAIAstraDocumentProcessor._validate_html_response(
                 self,
                 response,
-                schema,
-                AstraFullDocumentResponse,
-                html_validator=lambda payload: OpenAIAstraDocumentProcessor._validate_full_document_html(
-                    payload.document.html,
-                    validator,
-                    source_assets,
-                ),
+                OpenAIAstraDocumentProcessor._response_audit(self, response, self._reasoning_effort),
             )
         finally:
             for uploaded in uploaded_files:
-                try:
+                with suppress(Exception):
                     self._client.files.delete(uploaded.id)
-                except Exception:
-                    pass
-
-    def _read_style_reference_pdf(self) -> bytes:
-        return OpenAIAstraDocumentProcessor._read_style_reference_pdf(self)
-
-    def _read_style_overviews(self) -> list[tuple[str, str, bytes]]:
-        return OpenAIAstraDocumentProcessor._read_style_overviews(self)

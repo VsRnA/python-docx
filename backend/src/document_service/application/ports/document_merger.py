@@ -9,9 +9,7 @@ class MergeSource:
     source_file_id: str
     filename: str
     content: bytes
-    rendered_pdf: bytes
     position: int
-    assets: list[ProcessedAsset] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +30,8 @@ class DocumentMerger(Protocol):
         document_id: str,
         sources: list[MergeSource],
         merge_notes: str | None,
-        prompt_package_version: str,
         theme_id: str,
         theme_version: str,
+        style_prompt: str,
+        style_reference_pdf: bytes,
     ) -> MergedDocumentResult: ...

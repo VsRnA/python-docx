@@ -12,7 +12,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column("processing_profiles", sa.Column("glossary_version_id", sa.String(length=128), nullable=True))
+    op.add_column(
+        "processing_profiles",
+        sa.Column("glossary_version_id", sa.String(length=128), nullable=True),
+    )
 
 
 def downgrade() -> None:

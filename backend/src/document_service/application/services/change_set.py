@@ -2,13 +2,18 @@ import hashlib
 import re
 from dataclasses import dataclass
 
+from document_service.application.errors import (
+    BlockChangedConflictError,
+    BlockNotFoundConflictError,
+    InvalidChangeSetError,
+)
 from document_service.application.ports.document_ai_editor import ChangeOperation, DocumentChangeSet
 
 TAG_PATTERN = re.compile(r"<!--[\s\S]*?-->|<[^>]+>")
 START_PATTERN = re.compile(r"<\s*([a-zA-Z][\w:-]*)\b")
 END_PATTERN = re.compile(r"<\s*/\s*([a-zA-Z][\w:-]*)\s*>")
-BLOCK_ID_PATTERN = re.compile(r'data-block-id\s*=\s*["\']([^"\']+)["\']')
-VOID_TAGS = {"br", "hr", "img"}
+BLOCK_ID_PATTERN = re.compile(r'data-(?:block-id|b)\s*=\s*["\']([^"\']+)["\']')
+VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +25,7 @@ class HtmlBlock:
     digest: str
 
 
-class ChangeSetConflictError(ValueError):
+class ChangeSetConflictError(InvalidChangeSetError):
     pass
 
 
@@ -85,9 +90,9 @@ class ChangeSetApplier:
         for operation in change_set.operations:
             block = blocks.get(operation.block_id)
             if block is None:
-                raise ChangeSetConflictError(f"Block not found: {operation.block_id}")
+                raise BlockNotFoundConflictError(f"Block not found: {operation.block_id}")
             if block.digest != operation.expected_hash:
-                raise ChangeSetConflictError(f"Block changed: {operation.block_id}")
+                raise BlockChangedConflictError(f"Block changed: {operation.block_id}")
             self._validate_operation(operation)
             if operation.operation == "replace_block":
                 edit = (block.start, block.end, operation.html or "")

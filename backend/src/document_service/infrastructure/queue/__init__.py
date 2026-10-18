@@ -1,4 +1,3 @@
-from document_service.infrastructure.queue.celery_app import celery_app
-from document_service.infrastructure.queue.celery_queue import CeleryDocumentJobQueue
+from document_service.infrastructure.queue.postgres_queue import PostgresDocumentJobQueue
 
-__all__ = ["CeleryDocumentJobQueue", "celery_app"]
+__all__ = ["PostgresDocumentJobQueue"]

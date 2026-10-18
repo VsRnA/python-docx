@@ -1,78 +1,58 @@
 # Document Management Service
 
-Monorepo внутреннего сервиса обработки документов.
+Веб-сервис принимает DOCX, формирует редактируемый HTML через GPT Astra 6, хранит версии и изображения, поддерживает AI-правки, перевод и HTML-публикации.
 
-## Структура
+## Состав
 
-```text
-backend/   FastAPI, слоистая архитектура
-frontend/  React, TypeScript, Feature Sliced Design
-renderer/  WeasyPrint 68 для HTML и PDF
-gotenberg  LibreOffice-конвертация исходного DOCX в визуальный PDF
+- `backend` — FastAPI, PostgreSQL, очередь задач в PostgreSQL, Timeweb S3, GPT Astra 6 и YandexGPT.
+- `frontend` — React/TypeScript-интерфейс документов, редактора и стилизаций.
+- merge-документы отправляются в GPT Astra 6 вместе с исходными DOCX и PDF-образцом стиля.
+
+Первичный импорт отправляет в Astra исходный DOCX, PDF-образец стилизации, изображения из DOCX и prompt выбранной стилизации. Prompt стилизации хранится в базе данных. Для слияния документов Astra получает исходные DOCX, промпт слияния и тот же PDF-образец стилизации.
+
+## Запуск
+
+```bash
+cp backend/.env.example backend/.env
+docker compose build
+docker compose up -d
+docker compose ps
 ```
 
-Backend разделен на слои:
+API: `http://localhost:8000`
+Frontend: `http://localhost:8080`
 
-- `domain` — сущности, value objects и бизнес-правила;
-- `application` — use cases и порты;
-- `infrastructure` — PostgreSQL, Timeweb S3, GPT Astra 6, Yandex GPT и очередь;
-- `presentation` — HTTP API и DTO.
+Миграции выполняются контейнером `migrate`. Остановка без удаления данных:
 
-Frontend использует слои FSD:
+```bash
+docker compose down
+```
 
-- `app` — инициализация приложения;
-- `pages` — страницы маршрутов;
-- `widgets` — крупные композиционные блоки;
-- `features` — пользовательские действия;
-- `entities` — бизнес-сущности;
-- `shared` — UI kit, API client, конфигурация и утилиты.
-
-Документация:
-
-- [`docs/TECHNICAL_SPECIFICATION.md`](docs/TECHNICAL_SPECIFICATION.md) — полное техническое задание;
-- [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md) — этапы, состояние и критерии готовности.
-
-## Локальный запуск backend
+## Локальные проверки
 
 ```bash
 cd backend
-uv sync --extra dev
-uv run uvicorn document_service.main:app --reload
+python -m compileall -q src tests
+python scripts/check_import_boundaries.py
+pytest
+
+cd ../frontend
+npm ci
+npm run typecheck
+npm run check:boundaries
+npm run lint
+npm run build
 ```
 
-## Локальный запуск frontend
+## Архитектура
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Backend разделён на `domain`, `application`, `infrastructure` и `presentation`. Frontend использует слои `app`, `pages`, `widgets`, `features`, `entities` и `shared`.
 
-## Проверки
+Результат обработки — безопасный канонический HTML с `data-block-id` и ссылками `asset://UUID`. HTML можно редактировать в интерфейсе и публиковать с материализованными изображениями. PDF-экспорт и отдельный Chromium-renderer в текущем продукте не используются.
 
-```bash
-cd backend && uv run pytest
-cd frontend && npm run typecheck && npm run test
-```
+Основные материалы стилизации:
 
-## Пакет первоначального разбора
-
-Worker отправляет в GPT Astra 6 четыре явно разделенных типа входов:
-
-- исходный `SOURCE_DOCUMENT.docx` как источник текста и структуры;
-- автоматически собранный `SOURCE_RENDER.pdf` как источник страниц, изображений и якорных
-  элементов;
-- `backend/reference/style-reference.pdf` как детальный визуальный эталон;
-- `backend/reference/overview/contact-*.jpg` как обзор всей системы страниц эталона.
-
-Контент из эталона запрещено переносить в результат. Его назначение — только визуальная система,
-типографика, шапки, подвалы, предупреждения, таблицы и оформление иллюстраций. Суммарный размер трех
-файловых входов контролируется переменной `MAX_AI_FILE_INPUT_BYTES` и по умолчанию равен 50 МБ.
-
-Текущие версии преобразования — `docx-to-html/v2` и `villartec-manual-a4@1.0`. План доведения
-до golden test описан в
-[`docs/A4_RENDERING_IMPLEMENTATION_PLAN.md`](docs/A4_RENDERING_IMPLEMENTATION_PLAN.md).
-
-До завершения реализации проект намеренно не запускается. Первый полный запуск, миграции и
-проверки выполняются в Docker после готовности всех модулей.
-# python-docx
+- prompt выбранной опубликованной версии хранится в PostgreSQL;
+- PDF-образец выбранной опубликованной версии хранится в S3;
+- ответы Astra проверяются кодовыми Pydantic- и HTML-контрактами;
+- JSON-контракт настроек: `docs/contracts/style-settings.v1.json`.

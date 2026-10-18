@@ -6,12 +6,14 @@ from uuid import UUID
 from document_service.application.dto.document_commands import CreateDocumentCommand
 from document_service.application.ports.document_repository import DocumentRepository
 from document_service.application.ports.job_queue import DocumentJobQueue
-from document_service.application.ports.object_storage import ObjectStorage
 from document_service.application.ports.job_repository import JobRepository
-from document_service.application.ports.processing_profile_repository import ProcessingProfileRepository
-from document_service.domain.entities.processing_profile import ProcessingProfile
+from document_service.application.ports.object_storage import ObjectStorage
+from document_service.application.ports.processing_profile_repository import (
+    ProcessingProfileRepository,
+)
 from document_service.domain.entities.document import Document
 from document_service.domain.entities.job import Job
+from document_service.domain.entities.processing_profile import ProcessingProfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,23 +68,30 @@ class CreateDocument:
         if command.style_version_id is not None:
             if self._profiles is None:
                 raise RuntimeError("Processing profile repository is required when a style is selected")
-            await self._profiles.add(ProcessingProfile(
-                document_id=document.id,
-                style_version_id=command.style_version_id,
-                source_language=command.source_language,
-                target_language=command.target_language,
-                translation_enabled=command.translation_enabled,
-                glossary_version_id=command.glossary_version_id,
-            ))
+            await self._profiles.add(
+                ProcessingProfile(
+                    document_id=document.id,
+                    style_version_id=command.style_version_id,
+                    source_language=command.source_language,
+                    target_language=command.target_language,
+                    translation_enabled=command.translation_enabled,
+                    glossary_version_id=command.glossary_version_id,
+                )
+            )
         await self._jobs.add(job)
-        await self._queue.enqueue_initial_processing(document.id, job.id)
+        await self._repository.commit()
+        try:
+            await self._queue.enqueue_initial_processing(document.id, job.id)
+        except Exception:
+            return DocumentCreated(document_id=document.id, job_id=str(job.id))
         return DocumentCreated(document_id=document.id, job_id=str(job.id))
 
     def _validate(self, command: CreateDocumentCommand) -> None:
         if command.size_bytes != len(command.content):
             raise ValueError("Declared file size does not match uploaded content")
         if command.size_bytes > self._max_size_bytes:
-            raise ValueError("DOCX file exceeds the 50 MB limit")
+            limit_mb = self._max_size_bytes / (1024 * 1024)
+            raise ValueError(f"DOCX file exceeds the configured {limit_mb:g} MB limit")
         if command.content_type not in {
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "application/octet-stream",

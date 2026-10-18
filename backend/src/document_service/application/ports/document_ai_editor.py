@@ -19,9 +19,8 @@ class DocumentChangeSet:
     operations: list[ChangeOperation]
     assets: list[ProcessedAsset] = field(default_factory=list)
 
-
 class DocumentAiEditor(Protocol):
-    async def edit(
+    async def edit_html(
         self,
         *,
         html: str,
@@ -29,7 +28,22 @@ class DocumentAiEditor(Protocol):
         base_revision: int,
         block_hashes: dict[str, str],
         target_block_ids: list[str] | None,
-        prompt_package_version: str,
+        target_kind: Literal["document", "block", "text", "image"],
+        target_asset_id: str | None,
+        selected_text: str | None,
         theme_id: str,
         theme_version: str,
-    ) -> DocumentChangeSet: ...
+        style_prompt: str,
+        style_reference_pdf: bytes,
+    ) -> tuple[str, str]: ...
+
+    async def edit_image(
+        self,
+        *,
+        image: bytes,
+        mime_type: str,
+        filename: str,
+        instruction: str,
+        style_prompt: str,
+        style_reference_pdf: bytes,
+    ) -> bytes: ...

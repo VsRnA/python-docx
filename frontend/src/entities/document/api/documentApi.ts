@@ -8,7 +8,19 @@ import type {
   DocumentListItem,
   DocumentVersion,
 } from '../model/types'
-import type { DocumentComment, DocumentOperation, DocumentSnapshot } from '../model/operations'
+import type { DocumentComment, DocumentSnapshot } from '../model/operations'
+
+export interface ProcessingOptions {
+  styleVersionId?: string
+  targetLanguage?: string
+  translationEnabled?: boolean
+}
+
+function appendProcessingOptions(body: FormData, processing?: ProcessingOptions) {
+  if (processing?.styleVersionId) body.set('style_version_id', processing.styleVersionId)
+  if (processing?.targetLanguage) body.set('target_language', processing.targetLanguage)
+  body.set('translation_enabled', String(Boolean(processing?.translationEnabled)))
+}
 
 export function getDocuments(params?: { search?: string; status?: string; sort?: 'updated' | 'created' | 'title' }) {
   const query = new URLSearchParams()
@@ -26,25 +38,12 @@ export function cancelJob(jobId: string) {
   return apiRequest<{ id: string; status: string }>(`/jobs/${jobId}/cancel`, { method: 'POST' })
 }
 
+export function getJob(jobId: string) {
+  return apiRequest<{ id: string; status: string; progress: number; stage: string; error_message?: string | null }>(`/jobs/${jobId}`)
+}
+
 export function getDocumentSnapshot(id: string) {
   return apiRequest<DocumentSnapshot>(`/documents/${id}/snapshot`)
-}
-
-export function applyDocumentOperations(id: string, baseRevision: number, operations: DocumentOperation[]) {
-  return apiRequest<{ revision: number; accepted_operations: string[] }>(`/documents/${id}/operations`, {
-    method: 'POST',
-    body: JSON.stringify({
-      base_revision: baseRevision,
-      operations: operations.map((operation) => ({
-        ...operation,
-        operation_id: operation.operation_id ?? crypto.randomUUID(),
-      })),
-    }),
-  })
-}
-
-export function getDocumentOperations(id: string, after: number) {
-  return apiRequest<{ revision: number; operations: DocumentOperation[] }>(`/documents/${id}/operations?after=${after}`)
 }
 
 export function createDocumentComment(id: string, blockId: string | null, text: string) {
@@ -61,19 +60,11 @@ export function updateDocumentComment(commentId: string, payload: { text?: strin
   })
 }
 
-export function createDocument(title: string, file: File, processing?: {
-  styleVersionId?: string
-  targetLanguage?: string
-  translationEnabled?: boolean
-  glossaryVersionId?: string
-}) {
+export function createDocument(title: string, file: File, processing?: ProcessingOptions) {
   const body = new FormData()
   body.set('title', title)
   body.set('file', file)
-  if (processing?.styleVersionId) body.set('style_version_id', processing.styleVersionId)
-  if (processing?.targetLanguage) body.set('target_language', processing.targetLanguage)
-  body.set('translation_enabled', String(Boolean(processing?.translationEnabled)))
-  if (processing?.glossaryVersionId) body.set('glossary_version_id', processing.glossaryVersionId)
+  appendProcessingOptions(body, processing)
   return apiRequest<CreateDocumentResult>('/documents', { method: 'POST', body })
 }
 
@@ -86,34 +77,13 @@ export function uploadDocumentAsset(documentId: string, file: File) {
   )
 }
 
-export function createMergedDocument(title: string, files: File[], mergeNotes?: string, processing?: {
-  styleVersionId?: string
-  targetLanguage?: string
-  translationEnabled?: boolean
-  glossaryVersionId?: string
-}) {
+export function createMergedDocument(title: string, files: File[], mergeNotes?: string, processing?: ProcessingOptions) {
   const body = new FormData()
   body.set('title', title)
   files.forEach((file) => body.append('files', file))
   if (mergeNotes?.trim()) body.set('merge_notes', mergeNotes.trim())
-  if (processing?.styleVersionId) body.set('style_version_id', processing.styleVersionId)
-  if (processing?.targetLanguage) body.set('target_language', processing.targetLanguage)
-  body.set('translation_enabled', String(Boolean(processing?.translationEnabled)))
-  if (processing?.glossaryVersionId) body.set('glossary_version_id', processing.glossaryVersionId)
+  appendProcessingOptions(body, processing)
   return apiRequest<CreateMergedDocumentResult>('/documents/merge', { method: 'POST', body })
-}
-
-export function saveDocument(id: string, baseRevision: number, html: string) {
-  return apiRequest<{ revision: number }>(`/documents/${id}/content`, {
-    method: 'PUT',
-    body: JSON.stringify({ base_revision: baseRevision, html }),
-  })
-}
-
-export function exportDocumentPdf(id: string) {
-  return apiRequest<{ url: string; expires_in: number }>(`/documents/${id}/exports/pdf`, {
-    method: 'POST',
-  })
 }
 
 export function exportDocumentHtmlPreview(id: string) {
@@ -139,26 +109,34 @@ export function restoreDocumentVersion(id: string, baseRevision: number, sourceR
   })
 }
 
-export function editDocumentWithAi(
+export function proposeDocumentAiEdit(
   id: string,
   baseRevision: number,
   instruction: string,
   targetBlockIds: string[] = [],
+  target?: { kind: 'document' | 'block' | 'text' | 'image'; blockId?: string; assetId?: string; selectedText?: string; assetFormat?: string; svgIndex?: number },
 ) {
-  return apiRequest<{ revision: number; summary: string }>(`/documents/${id}/ai-edits`, {
+  return apiRequest<{ proposal_id: string; base_revision: number; summary: string; before_html: string; after_html: string; operations: Array<{ operation: string; block_id: string; html?: string }> }>(`/documents/${id}/ai-edit-proposals`, {
     method: 'POST',
     body: JSON.stringify({
       base_revision: baseRevision,
       instruction,
       target_block_ids: targetBlockIds,
+      target: target ? {
+        kind: target.kind,
+        block_id: target.blockId,
+        asset_id: target.assetId,
+        selected_text: target.selectedText,
+        svg_index: target.svgIndex,
+      } : undefined,
     }),
   })
 }
 
-export function proposeDocumentAiEdit(id: string, baseRevision: number, instruction: string, targetBlockIds: string[] = []) {
-  return apiRequest<{ base_revision: number; summary: string; before_html: string; after_html: string; operations: Array<{ operation: string; block_id: string; html?: string }> }>(`/documents/${id}/ai-edit-proposals`, {
+export function acceptDocumentAiEdit(id: string, proposalId: string) {
+  return apiRequest<{ revision: number; summary: string }>(`/documents/${id}/ai-edit-proposals/accept`, {
     method: 'POST',
-    body: JSON.stringify({ base_revision: baseRevision, instruction, target_block_ids: targetBlockIds }),
+    body: JSON.stringify({ proposal_id: proposalId }),
   })
 }
 
@@ -171,7 +149,6 @@ export function translateDocument(
   baseRevision: number,
   sourceLanguage: string,
   targetLanguage: string,
-  glossaryVersion?: string,
 ) {
   return apiRequest<{ revision: number }>(`/documents/${id}/translations`, {
     method: 'POST',
@@ -179,7 +156,6 @@ export function translateDocument(
       base_revision: baseRevision,
       source_language: sourceLanguage,
       target_language: targetLanguage,
-      glossary_version: glossaryVersion || null,
     }),
   })
 }

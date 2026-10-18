@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -40,6 +41,9 @@ class DocumentDetailsResponse(BaseModel):
     processing_job_id: UUID | None = None
     style_version_id: UUID | None = None
     style_settings: dict = Field(default_factory=dict)
+    pipeline_metadata: dict = Field(default_factory=dict)
+    source_sha256: str | None = None
+    style_reference_sha256: str | None = None
     processing_profile: dict | None = None
     html: str | None
     astra_html: str | None
@@ -67,10 +71,19 @@ class TranslateDocumentRequest(BaseModel):
     glossary_version: str | None = None
 
 
+class AiEditTarget(BaseModel):
+    kind: Literal["document", "block", "text", "image"] = "document"
+    block_id: str | None = None
+    asset_id: UUID | None = None
+    selected_text: str | None = None
+    svg_index: int | None = Field(default=None, ge=0)
+
+
 class AiEditRequest(BaseModel):
     base_revision: int
     instruction: str
     target_block_ids: list[str] = Field(default_factory=list)
+    target: AiEditTarget | None = None
 
 
 class AiEditResponse(BaseModel):
@@ -79,11 +92,16 @@ class AiEditResponse(BaseModel):
 
 
 class AiEditProposalResponse(BaseModel):
+    proposal_id: UUID
     base_revision: int
     summary: str
     before_html: str
     after_html: str
     operations: list[dict]
+
+
+class AiEditAcceptRequest(BaseModel):
+    proposal_id: UUID
 
 
 class AiMessageResponse(BaseModel):
@@ -110,11 +128,6 @@ class PublicationListItem(BaseModel):
     revoked_at: datetime | None = None
 
 
-class SaveDocumentRequest(BaseModel):
-    base_revision: int
-    html: str
-
-
 class RenameDocumentRequest(BaseModel):
     title: str
 
@@ -123,26 +136,9 @@ class SaveDocumentResponse(BaseModel):
     revision: int
 
 
-class ExportPdfResponse(BaseModel):
-    url: str
-    expires_in: int
-
-
 class ExportHtmlPreviewResponse(BaseModel):
     url: str
     expires_in: int
-
-
-class DocumentOperationRequest(BaseModel):
-    operation_id: UUID
-    operation_type: str
-    block_id: str
-    payload: dict = Field(default_factory=dict)
-
-
-class ApplyOperationsRequest(BaseModel):
-    base_revision: int
-    operations: list[DocumentOperationRequest]
 
 
 class DocumentSnapshotResponse(BaseModel):

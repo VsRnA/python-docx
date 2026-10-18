@@ -1,6 +1,7 @@
 """Add versioned document styles and processing profiles."""
 
 from collections.abc import Sequence
+
 import sqlalchemy as sa
 from alembic import op
 

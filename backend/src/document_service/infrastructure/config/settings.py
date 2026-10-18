@@ -1,7 +1,11 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+AstraReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 
 
 class Settings(BaseSettings):
@@ -13,29 +17,30 @@ class Settings(BaseSettings):
     max_docx_size_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
 
     database_url: str = "postgresql+asyncpg://document_service:document_service@localhost:5432/document_service"
-    broker_url: str = "amqp://guest:guest@localhost:5672//"
 
     s3_endpoint_url: str = "https://s3.twcstorage.ru"
     s3_bucket: str = ""
     s3_region: str = "ru-1"
     s3_access_key: str = ""
     s3_secret_key: str = ""
+    s3_connect_timeout_seconds: float = Field(default=10.0, gt=0)
+    s3_read_timeout_seconds: float = Field(default=60.0, gt=0)
+    s3_download_timeout_seconds: float = Field(default=120.0, gt=0)
+    s3_max_attempts: int = Field(default=2, ge=1)
 
     openai_api_key: str = ""
     astra_model: str = "gpt-6-astra"
+    astra_reasoning_effort: AstraReasoningEffort = "xhigh"
+    astra_edit_reasoning_effort: AstraReasoningEffort = "xhigh"
+    astra_repair_reasoning_effort: AstraReasoningEffort = "high"
+    astra_repair_timeout_seconds: float = Field(default=180.0, gt=0)
+    astra_request_timeout_seconds: float | None = None
     yandex_gpt_api_key: str = ""
     yandex_folder_id: str = ""
     yandex_model_uri: str = ""
-    prompt_root: str = "prompts/docx-to-html"
-    prompt_package_version: str = "v2"
-    document_theme_id: str = "villartec-manual-a4"
+    document_theme_id: str = "villartec-manual-a5"
     document_theme_version: str = "1.0"
-    docx_converter_url: str = "http://gotenberg:3000"
-    docx_converter_timeout_seconds: float = Field(default=180.0, gt=0)
-    style_reference_pdf_path: str = "reference/style-reference.pdf"
-    style_reference_overview_dir: str = "reference/overview"
     max_ai_file_input_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
-    renderer_url: str = "http://renderer:3000"
     publication_base_url: str = ""
 
     auth_issuer: str = ""

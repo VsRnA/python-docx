@@ -10,11 +10,14 @@ from document_service.application.ports.document_source_file_repository import (
 from document_service.application.ports.job_queue import DocumentJobQueue
 from document_service.application.ports.job_repository import JobRepository
 from document_service.application.ports.object_storage import ObjectStorage
-from document_service.application.ports.processing_profile_repository import ProcessingProfileRepository
-from document_service.domain.entities.processing_profile import ProcessingProfile
+from document_service.application.ports.processing_profile_repository import (
+    ProcessingProfileRepository,
+)
 from document_service.domain.entities.document import Document
 from document_service.domain.entities.document_source_file import DocumentSourceFile
 from document_service.domain.entities.job import Job
+from document_service.domain.entities.processing_profile import ProcessingProfile
+from document_service.domain.value_objects.document_metadata import StyleSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +38,7 @@ class CreateMergedDocumentCommand:
     source_language: str | None = None
     target_language: str | None = None
     translation_enabled: bool = False
-    style_settings: dict | None = None
+    style_settings: StyleSettings | None = None
     glossary_version_id: str | None = None
 
 
@@ -78,6 +81,7 @@ class CreateMergedDocument:
             owner_id=command.owner_id,
             style_version_id=command.style_version_id,
             style_settings=command.style_settings or {},
+            pipeline_metadata={"merge_notes": command.merge_notes} if command.merge_notes else {},
         )
         source_entities: list[DocumentSourceFile] = []
         for position, file in enumerate(command.files, start=1):
@@ -109,16 +113,26 @@ class CreateMergedDocument:
         if command.style_version_id is not None:
             if self._profiles is None:
                 raise RuntimeError("Processing profile repository is required when a style is selected")
-            await self._profiles.add(ProcessingProfile(
-                document_id=document.id,
-                style_version_id=command.style_version_id,
-                source_language=command.source_language,
-                target_language=command.target_language,
-                translation_enabled=command.translation_enabled,
-                glossary_version_id=command.glossary_version_id,
-            ))
+            await self._profiles.add(
+                ProcessingProfile(
+                    document_id=document.id,
+                    style_version_id=command.style_version_id,
+                    source_language=command.source_language,
+                    target_language=command.target_language,
+                    translation_enabled=command.translation_enabled,
+                    glossary_version_id=command.glossary_version_id,
+                )
+            )
         await self._jobs.add(job)
-        await self._queue.enqueue_merge_processing(document.id, job.id)
+        await self._documents.commit()
+        try:
+            await self._queue.enqueue_merge_processing(document.id, job.id)
+        except Exception:
+            return MergedDocumentCreated(
+                document_id=document.id,
+                job_id=str(job.id),
+                source_count=len(source_entities),
+            )
         return MergedDocumentCreated(
             document_id=document.id,
             job_id=str(job.id),
@@ -134,7 +148,8 @@ class CreateMergedDocument:
             if file.size_bytes != len(file.content):
                 raise ValueError("Declared file size does not match uploaded content")
             if file.size_bytes > self._max_size_bytes:
-                raise ValueError("DOCX file exceeds the 50 MB limit")
+                limit_mb = self._max_size_bytes / (1024 * 1024)
+                raise ValueError(f"DOCX file exceeds the configured {limit_mb:g} MB limit")
             if file.content_type not in {
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 "application/octet-stream",

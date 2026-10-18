@@ -32,10 +32,3 @@ export interface DocumentComment {
   status: 'open' | 'resolved'
   created_at: string
 }
-
-export interface DocumentOperation {
-  operation_id?: string
-  operation_type: 'insert_text' | 'delete_text' | 'update_block' | 'insert_block' | 'delete_block' | 'set_mark'
-  block_id: string
-  payload: Record<string, unknown>
-}

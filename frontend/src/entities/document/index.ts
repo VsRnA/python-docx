@@ -1,2 +1,27 @@
-export * from './api/documentApi'
+export {
+  acceptDocumentAiEdit,
+  cancelJob,
+  createDocument,
+  createDocumentComment,
+  createMergedDocument,
+  deleteDocument,
+  exportDocumentHtmlPreview,
+  getAiMessages,
+  getDocument,
+  getDocumentPublications,
+  getDocumentSnapshot,
+  getDocumentVersion,
+  getDocumentVersions,
+  getDocuments,
+  getJob,
+  proposeDocumentAiEdit,
+  publishDocument,
+  renameDocument,
+  restoreDocumentVersion,
+  revokeDocumentPublication,
+  translateDocument,
+  updateDocumentComment,
+  uploadDocumentAsset,
+} from './api/documentApi'
+export type { ProcessingOptions } from './api/documentApi'
 export type * from './model/types'

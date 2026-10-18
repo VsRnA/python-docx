@@ -31,7 +31,12 @@ def upgrade() -> None:
     op.create_table(
         "document_versions",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("document_id", sa.Uuid(), sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "document_id",
+            sa.Uuid(),
+            sa.ForeignKey("documents.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("revision", sa.Integer(), nullable=False),
         sa.Column("html", sa.Text(), nullable=False),
         sa.Column("theme_id", sa.String(255), nullable=False),
@@ -41,11 +46,21 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
     op.create_index("ix_document_versions_document_id", "document_versions", ["document_id"])
-    op.create_index("uq_document_versions_revision", "document_versions", ["document_id", "revision"], unique=True)
+    op.create_index(
+        "uq_document_versions_revision",
+        "document_versions",
+        ["document_id", "revision"],
+        unique=True,
+    )
     op.create_table(
         "assets",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("document_id", sa.Uuid(), sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "document_id",
+            sa.Uuid(),
+            sa.ForeignKey("documents.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("storage_key", sa.String(1500), nullable=False),
         sa.Column("mime_type", sa.String(255), nullable=False),
         sa.Column("size_bytes", sa.BigInteger(), nullable=False),
@@ -61,7 +76,12 @@ def upgrade() -> None:
     op.create_table(
         "jobs",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("document_id", sa.Uuid(), sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "document_id",
+            sa.Uuid(),
+            sa.ForeignKey("documents.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("kind", sa.String(64), nullable=False),
         sa.Column("status", sa.String(64), nullable=False),
         sa.Column("progress", sa.Integer(), nullable=False, server_default="0"),
@@ -77,7 +97,12 @@ def upgrade() -> None:
     op.create_table(
         "publications",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("document_id", sa.Uuid(), sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "document_id",
+            sa.Uuid(),
+            sa.ForeignKey("documents.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("revision", sa.Integer(), nullable=False),
         sa.Column("object_key", sa.String(1500), nullable=False),
         sa.Column("created_by", sa.Uuid(), nullable=False),
@@ -87,7 +112,12 @@ def upgrade() -> None:
     op.create_table(
         "ai_messages",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("document_id", sa.Uuid(), sa.ForeignKey("documents.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "document_id",
+            sa.Uuid(),
+            sa.ForeignKey("documents.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("role", sa.String(32), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("revision", sa.Integer(), nullable=False),

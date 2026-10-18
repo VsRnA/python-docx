@@ -1,15 +1,13 @@
 import { apiRequest } from '@/shared/api/client'
 
-import type {
-  CreateStylePayload,
-  DocumentStyle,
-  DocumentStyleDetails,
-  ProcessingProfile,
-  StyleVersionSummary,
-} from '../model/types'
+import type { CreateStylePayload, DocumentStyle, DocumentStyleDetails, ProcessingProfile, UpdateStylePayload } from '../model/types'
 
 export function getStyles() {
   return apiRequest<DocumentStyle[]>('/styles')
+}
+
+export function bootstrapStyles() {
+  return apiRequest<DocumentStyle>('/styles/bootstrap', { method: 'POST' })
 }
 
 export function getStyle(id: string) {
@@ -23,44 +21,28 @@ export function createStyle(payload: CreateStylePayload) {
   })
 }
 
-export function createStyleVersion(styleId: string) {
-  return apiRequest<StyleVersionSummary>(`/styles/${styleId}/versions`, { method: 'POST' })
-}
-
-export function duplicateStyle(styleId: string) {
-  return apiRequest<DocumentStyle>(`/styles/${styleId}/duplicate`, { method: 'POST' })
-}
-
-export function archiveStyle(styleId: string) {
-  return apiRequest<DocumentStyle>(`/styles/${styleId}/archive`, { method: 'POST' })
-}
-
-export function updateStyleVersion(versionId: string, settings: Record<string, unknown>) {
-  return apiRequest<StyleVersionSummary>(`/style-versions/${versionId}`, {
+export function updateStyle(styleId: string, payload: UpdateStylePayload) {
+  return apiRequest<DocumentStyleDetails>(`/styles/${styleId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ settings }),
+    body: JSON.stringify(payload),
   })
 }
 
-export function validateStyleVersion(versionId: string) {
-  return apiRequest<StyleVersionSummary>(`/style-versions/${versionId}/validate`, { method: 'POST' })
+export function deleteStyle(styleId: string) {
+  return apiRequest<void>(`/styles/${styleId}`, { method: 'DELETE' })
 }
 
-export function publishStyleVersion(versionId: string) {
-  return apiRequest<StyleVersionSummary>(`/style-versions/${versionId}/publish`, { method: 'POST' })
-}
-
-export function previewStyleVersion(versionId: string) {
-  return apiRequest<{ url: string; expires_in: number }>(`/style-versions/${versionId}/preview`, { method: 'POST' })
-}
-
-export function uploadStyleReference(versionId: string, file: File) {
+export function uploadStyleReference(styleId: string, file: File) {
   const body = new FormData()
   body.set('file', file)
   return apiRequest<{ filename: string; sha256: string; size_bytes: number }>(
-    `/style-versions/${versionId}/reference`,
+    `/styles/${styleId}/reference`,
     { method: 'POST', body },
   )
+}
+
+export function getStyleReference(styleId: string) {
+  return apiRequest<{ url: string; expires_in: number; filename: string | null }>(`/styles/${styleId}/reference`)
 }
 
 export function createProcessingProfile(documentId: string, payload: {
@@ -68,7 +50,6 @@ export function createProcessingProfile(documentId: string, payload: {
   source_language?: string
   target_language?: string
   translation_enabled: boolean
-  glossary_version_id?: string
 }) {
   return apiRequest<ProcessingProfile>(`/documents/${documentId}/processing-profiles`, {
     method: 'POST',

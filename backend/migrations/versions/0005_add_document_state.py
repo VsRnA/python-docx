@@ -1,6 +1,7 @@
 """Add snapshots, operations and comments for the document editor."""
 
 from collections.abc import Sequence
+
 import sqlalchemy as sa
 from alembic import op
 

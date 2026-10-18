@@ -2,13 +2,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from document_service.domain.value_objects.job_status import JobStatus
+
 
 @dataclass(slots=True)
 class Job:
     document_id: UUID
     kind: str
     id: UUID = field(default_factory=uuid4)
-    status: str = "queued"
+    status: JobStatus = JobStatus.QUEUED
     progress: int = 0
     stage: str = "queued"
     error_code: str | None = None
@@ -16,9 +18,13 @@ class Job:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    lease_owner: str | None = None
+    lease_until: datetime | None = None
 
     def start(self, *, stage: str = "processing", progress: int = 5) -> None:
-        self.status = "running"
+        if self.status is JobStatus.CANCELLED:
+            raise ValueError("A cancelled job cannot be started")
+        self.status = JobStatus.RUNNING
         self.stage = stage
         self.progress = progress
         self.started_at = datetime.now(UTC)
@@ -33,21 +39,27 @@ class Job:
         self.progress = progress
 
     def complete(self) -> None:
-        self.status = "completed"
+        self.status = JobStatus.COMPLETED
         self.stage = "completed"
         self.progress = 100
         self.finished_at = datetime.now(UTC)
+        self.lease_owner = None
+        self.lease_until = None
 
     def fail(self, *, code: str, message: str) -> None:
-        self.status = "failed"
+        self.status = JobStatus.FAILED
         self.stage = "failed"
         self.error_code = code
         self.error_message = message[:4000]
         self.finished_at = datetime.now(UTC)
+        self.lease_owner = None
+        self.lease_until = None
 
     def cancel(self) -> None:
-        if self.status not in {"queued", "running"}:
+        if self.status not in {JobStatus.QUEUED, JobStatus.RUNNING}:
             raise ValueError("Only queued or running jobs can be cancelled")
-        self.status = "cancelled"
+        self.status = JobStatus.CANCELLED
         self.stage = "cancelled"
         self.finished_at = datetime.now(UTC)
+        self.lease_owner = None
+        self.lease_until = None

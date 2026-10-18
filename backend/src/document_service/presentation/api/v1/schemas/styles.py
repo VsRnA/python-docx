@@ -1,5 +1,6 @@
 from datetime import datetime
 from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 
@@ -7,6 +8,12 @@ class StyleCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     settings: dict = Field(default_factory=dict)
+
+
+class StyleUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    prompt: str | None = Field(default=None, min_length=1)
 
 
 class StyleVersionResponse(BaseModel):
@@ -27,7 +34,6 @@ class StyleResponse(BaseModel):
     status: str
     current_version: StyleVersionResponse | None
     versions_count: int
-    documents_count: int = 0
     created_at: datetime
     updated_at: datetime
 

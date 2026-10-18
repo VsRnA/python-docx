@@ -28,11 +28,13 @@ export interface DocumentDetails {
   processing_job_id?: string | null
   style_version_id?: string | null
   style_settings?: Record<string, unknown>
+  pipeline_metadata?: Record<string, unknown>
+  source_sha256?: string | null
+  style_reference_sha256?: string | null
   processing_profile?: {
     source_language: string | null
     target_language: string | null
     translation_enabled: boolean
-    glossary_version_id: string | null
     status?: string
   } | null
   html: string | null
@@ -83,6 +85,15 @@ export interface SelectionContextBlock {
   textPreview: string
 }
 
+export interface SelectionTarget {
+  kind: 'document' | 'block' | 'text' | 'image'
+  blockId?: string
+  assetId?: string
+  selectedText?: string
+  assetFormat?: string
+  svgIndex?: number
+}
+
 export interface SelectionContext {
   scope: 'selection' | 'current-block' | 'document'
   blockIds: string[]
@@ -90,4 +101,5 @@ export interface SelectionContext {
   selectedText: string
   textPreview: string
   characterCount: number
+  target: SelectionTarget
 }

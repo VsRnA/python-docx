@@ -92,7 +92,12 @@ coverage/
 celerybeat-schedule*
 *.pid
 pids/
-storage/
+# Runtime storage directories. Keep source packages such as
+# backend/src/document_service/infrastructure/storage tracked.
+/storage/
+backend/storage/
+renderer/storage/
+frontend/storage/
 uploads/
 data/
 

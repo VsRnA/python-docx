@@ -6,21 +6,21 @@
 
 :root {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #20242a;
-  background: #f6f7f9;
-  --app-focus: rgb(35 96 190 / 24%);
+  color: #171717;
+  background: #f7f6f3;
+  --app-focus: rgb(243 111 33 / 24%);
   --app-ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --ds-ink: #20262d;
-  --ds-ink-soft: #4d5864;
-  --ds-muted: #74808d;
-  --ds-rule: #d4d9df;
-  --ds-shell: #e9edf1;
-  --ds-shell-deep: #e1e6eb;
+  --ds-ink: #171717;
+  --ds-ink-soft: #45413d;
+  --ds-muted: #7b7772;
+  --ds-rule: #e5e1dc;
+  --ds-shell: #f1efec;
+  --ds-shell-deep: #e9e4df;
   --ds-surface: #ffffff;
-  --ds-surface-subtle: #f6f8fa;
-  --ds-action: #2360be;
-  --ds-action-hover: #1b4f9d;
-  --ds-orange: #f47720;
+  --ds-surface-subtle: #faf9f7;
+  --ds-action: #f36f21;
+  --ds-action-hover: #d95d16;
+  --ds-orange: #f36f21;
   --ds-success: #2c7b52;
   --ds-warning: #a76413;
   --ds-danger: #b23a42;
@@ -139,7 +139,7 @@ summary:focus-visible {
 /* Document workbench: calm chrome, one action color, paper as the hero. */
 .workbench-shell {
   color: var(--ds-ink);
-  background: #e1e6eb;
+  background: var(--ds-shell);
 }
 
 .workbench-header {
@@ -162,39 +162,39 @@ summary:focus-visible {
 .workbench-header a:hover,
 .workbench-header button:hover:not(:disabled),
 .workbench-header summary:hover {
-  background: #f1f3f5;
+  background: var(--ds-shell);
 }
 
 .workbench-header input:hover,
 .workbench-header input:focus {
-  border-color: #aeb7c0;
-  background: #f7f8fa;
+  border-color: var(--ds-action);
+  background: var(--ds-surface-subtle);
 }
 
 .workbench-header button:not([class*='bg-app-accent']),
 .workbench-header summary {
-  background: #ffffff;
-  border-color: #cbd2da;
+  background: var(--ds-surface);
+  border-color: var(--ds-rule);
 }
 
 .workbench-sidebar {
-  color: #5f6872;
-  background: #f1f3f5;
-  border-color: #d4d9df;
+  color: var(--ds-muted);
+  background: var(--ds-surface);
+  border-color: var(--ds-rule);
 }
 
 .workbench-sidebar button {
   min-height: 36px;
-  color: #59636d;
+  color: var(--ds-muted);
 }
 
 .workbench-sidebar button:hover {
-  color: #20262d;
-  background: #e3e7eb;
+  color: var(--ds-ink);
+  background: var(--ds-shell);
 }
 
 .workbench-sidebar h2 {
-  color: #68737d;
+  color: var(--ds-muted);
   letter-spacing: 0.14em;
 }
 
@@ -204,42 +204,46 @@ summary:focus-visible {
 }
 
 .workbench-modebar [role='tablist'] {
-  background: #edf0f4;
-  border: 1px solid #e0e4e9;
+  background: var(--ds-shell);
+  border: 1px solid var(--ds-rule);
 }
 
 .workbench-toolbar {
   min-height: 56px;
   color: var(--ds-ink-soft);
-  background: #fbfcfd;
+  background: var(--ds-surface-subtle);
   border-color: var(--ds-rule);
   box-shadow: 0 1px 0 rgb(32 38 45 / 3%);
 }
 
 .workbench-toolbar [role='group'] {
-  border-color: #dce1e6;
+  border-color: var(--ds-rule);
 }
 
 .workbench-toolbar select {
   min-height: 34px;
   color: var(--ds-ink);
   background: var(--ds-surface);
-  border-color: #cbd2da;
+  border-color: var(--ds-rule);
 }
 
 .workbench-toolbar button[aria-pressed='true'] {
-  color: #174f9e;
-  background: #e4edfb;
-  border-color: #b9cfee;
-  box-shadow: 0 1px 2px rgb(24 64 120 / 10%);
+  color: var(--ds-action-hover);
+  background: var(--ds-action-soft, #fff0e6);
+  border-color: var(--ds-action);
+  box-shadow: 0 1px 2px rgb(211 93 22 / 10%);
 }
 
 .workbench-canvas {
-  background: #e1e6eb;
+  background: var(--ds-shell-deep);
 }
 
 .workbench-canvas .document-theme .ProseMirror {
   box-shadow: 0 12px 28px rgb(36 46 58 / 15%), 0 2px 5px rgb(36 46 58 / 8%);
+}
+
+.workbench-canvas .document-openai .ProseMirror {
+  outline: none;
 }
 
 .workbench-footer {
@@ -263,7 +267,7 @@ summary:focus-visible {
 .workbench-assistant textarea,
 .workbench-assistant input,
 .workbench-assistant select {
-  border-color: #cbd2da;
+  border-color: var(--ds-rule);
 }
 
 .app-panel {

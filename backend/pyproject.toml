@@ -7,15 +7,16 @@ dependencies = [
   "alembic>=1.14,<2",
   "asyncpg>=0.30,<1",
   "boto3>=1.36,<2",
-  "celery>=5.4,<6",
+  "CairoSVG>=2.7,<3",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
-  "nh3>=0.2.20,<1",
   "openai>=1.60,<2",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
   "pyjwt[crypto]>=2.10,<3",
   "python-multipart>=0.0.20,<1",
+  "Pillow>=11.0,<12",
+  "PyMuPDF>=1.24,<2",
   "sqlalchemy[asyncio]>=2.0.37,<3",
   "uvicorn[standard]>=0.34,<1",
 ]
@@ -41,8 +42,11 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/document_service/presentation/api/v1/routes/*.py" = ["B008"]

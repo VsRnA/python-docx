@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from document_service.domain.value_objects.document_metadata import StyleSettings
+
 
 @dataclass(frozen=True, slots=True)
 class CreateDocumentCommand:
@@ -14,5 +16,5 @@ class CreateDocumentCommand:
     source_language: str | None = None
     target_language: str | None = None
     translation_enabled: bool = False
-    style_settings: dict | None = None
+    style_settings: StyleSettings | None = None
     glossary_version_id: str | None = None

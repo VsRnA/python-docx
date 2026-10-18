@@ -19,7 +19,6 @@ export interface DocumentStyle {
   status: StyleStatus
   current_version: StyleVersionSummary | null
   versions_count: number
-  documents_count: number
   created_at: string
   updated_at: string
 }
@@ -34,6 +33,12 @@ export interface CreateStylePayload {
   settings?: Record<string, unknown>
 }
 
+export interface UpdateStylePayload {
+  name?: string
+  description?: string
+  prompt?: string
+}
+
 export interface ProcessingProfile {
   id: string
   document_id: string
@@ -41,7 +46,6 @@ export interface ProcessingProfile {
   source_language: string | null
   target_language: string | null
   translation_enabled: boolean
-  glossary_version_id?: string | null
   status: string
   created_at: string
 }

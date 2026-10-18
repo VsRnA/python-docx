@@ -4,9 +4,8 @@ from document_service.application.ports.asset_repository import AssetRepository
 from document_service.application.ports.document_repository import DocumentRepository
 from document_service.application.ports.document_version_repository import DocumentVersionRepository
 from document_service.application.ports.object_storage import ObjectStorage
-from document_service.application.ports.pdf_renderer import PdfRenderer
-from document_service.application.services.asset_materializer import AssetMaterializer
 from document_service.application.ports.publication_repository import PublicationRepository
+from document_service.application.services.asset_materializer import AssetMaterializer
 from document_service.domain.entities.publication import Publication
 
 
@@ -17,13 +16,11 @@ class PublishDocument:
         versions: DocumentVersionRepository,
         assets: AssetRepository,
         storage: ObjectStorage,
-        renderer: PdfRenderer,
         publications: PublicationRepository,
     ) -> None:
         self._documents = documents
         self._versions = versions
         self._storage = storage
-        self._renderer = renderer
         self._materializer = AssetMaterializer(assets, storage)
         self._publications = publications
 
@@ -35,16 +32,13 @@ class PublishDocument:
         if version is None:
             raise ValueError("Document has no publishable version")
         html = await self._materializer.inline(version.html, document_id)
-        bundle = await self._renderer.bundle_html(
-            html=html,
-            title=document.title,
-            theme_id=version.theme_id,
-            theme_version=version.theme_version,
-            style_settings=document.style_settings,
-        )
         publication_id = uuid4()
         key = f"documents/{document.id}/publications/{publication_id}.html"
-        stored = await self._storage.put(key=key, content=bundle, content_type="text/html; charset=utf-8")
+        stored = await self._storage.put(
+            key=key,
+            content=html.encode("utf-8"),
+            content_type="text/html; charset=utf-8",
+        )
         publication = Publication(
             id=publication_id,
             document_id=document_id,

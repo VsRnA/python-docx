@@ -1,3 +1,4 @@
+import asyncio
 import html
 
 import httpx
@@ -9,7 +10,14 @@ class YandexGPTTranslator:
     def __init__(self, *, api_key: str, folder_id: str, model_uri: str) -> None:
         self._api_key = api_key
         self._folder_id = folder_id
-        self._model_uri = model_uri
+        self._model_uri = self._normalize_model_uri(model_uri, folder_id)
+
+    @staticmethod
+    def _normalize_model_uri(model_uri: str, folder_id: str) -> str:
+        value = model_uri.strip()
+        if value in {"yandexgpt", "yandexgpt/latest"} and folder_id.strip():
+            return f"gpt://{folder_id.strip()}/yandexgpt/latest"
+        return value
 
     async def translate(
         self,
@@ -21,16 +29,20 @@ class YandexGPTTranslator:
     ) -> dict[str, str]:
         if not segments:
             return {}
-        translated: dict[str, str] = {}
-        for batch in self._batches(segments):
-            translated.update(
-                await self._translate_batch(
+        semaphore = asyncio.Semaphore(3)
+
+        async def translate_batch(batch: list[TranslationSegment]) -> dict[str, str]:
+            async with semaphore:
+                return await self._translate_batch(
                     batch,
                     source_language=source_language,
                     target_language=target_language,
                     glossary_version=glossary_version,
                 )
-            )
+
+        translated: dict[str, str] = {}
+        for batch_result in await asyncio.gather(*(translate_batch(batch) for batch in self._batches(segments))):
+            translated.update(batch_result)
         return translated
 
     async def _translate_batch(
@@ -41,9 +53,7 @@ class YandexGPTTranslator:
         target_language: str,
         glossary_version: str | None,
     ) -> dict[str, str]:
-        lines = "\n".join(
-            f"<{item.segment_id}>{html.escape(item.text)}</{item.segment_id}>" for item in segments
-        )
+        lines = "\n".join(f"<{item.segment_id}>{html.escape(item.text)}</{item.segment_id}>" for item in segments)
         glossary_instruction = (
             f" Apply the terminology glossary version {glossary_version}." if glossary_version else ""
         )
@@ -57,7 +67,8 @@ class YandexGPTTranslator:
             "Preserve every XML-like segment id, numbers, units and model names. "
             f"Return only the translated tagged segments.{glossary_instruction}\n" + lines
         )
-        async with httpx.AsyncClient(timeout=180) as client:
+        timeout = httpx.Timeout(connect=10, read=90, write=30, pool=30)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
                 headers={
@@ -113,7 +124,5 @@ class YandexGPTTranslator:
             end = f"</{segment.segment_id}>"
             if start not in text or end not in text:
                 raise ValueError(f"Translation segment {segment.segment_id} is missing")
-            translated[segment.segment_id] = html.unescape(
-                text.split(start, 1)[1].split(end, 1)[0].strip()
-            )
+            translated[segment.segment_id] = html.unescape(text.split(start, 1)[1].split(end, 1)[0].strip())
         return translated
