@@ -22,6 +22,14 @@ docker compose ps
 API: `http://localhost:8000`
 Frontend: `http://localhost:8080`
 
+Для разработки с автоматическим обновлением исходников запускайте Docker Compose с dev-конфигурацией:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up --build --watch
+```
+
+Dev-фронтенд открывается на `http://localhost:8081`. Изменения во `frontend/src` подхватываются через Vite HMR, изменения в `backend/src` — через autoreload API и перезапуск worker. Пересборка нужна только после изменения зависимостей или Docker-конфигурации.
+
 Миграции выполняются контейнером `migrate`. Остановка без удаления данных:
 
 ```bash
@@ -55,4 +63,3 @@ Backend разделён на `domain`, `application`, `infrastructure` и `pres
 - prompt выбранной опубликованной версии хранится в PostgreSQL;
 - PDF-образец выбранной опубликованной версии хранится в S3;
 - ответы Astra проверяются кодовыми Pydantic- и HTML-контрактами;
-- JSON-контракт настроек: `docs/contracts/style-settings.v1.json`.

@@ -56,8 +56,6 @@ export function EditorPage() {
   ))
   const [notification, setNotification] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [translationSource, setTranslationSource] = useState('auto')
-  const [translationTarget, setTranslationTarget] = useState('ru')
   const [selectionContext, setSelectionContext] = useState<SelectionContext>({
     scope: 'document',
     blockIds: [],
@@ -97,7 +95,7 @@ export function EditorPage() {
     },
   })
   const translation = useMutation({
-    mutationFn: () => translateDocument(documentId!, revision, translationSource, translationTarget),
+    mutationFn: () => translateDocument(documentId!, revision, 'auto', 'ru'),
     onSuccess: async (result) => {
       setRevision(result.revision)
       setMenuOpen(false)
@@ -213,17 +211,12 @@ export function EditorPage() {
           </span>
         </div>
         <div className="flex items-center gap-2 max-[760px]:col-span-full max-[760px]:w-full max-[760px]:flex-wrap max-[760px]:justify-end">
-          {!assistantOpen && <button className={secondaryActionClass} type="button" onClick={() => setAssistantOpen(true)}>Открыть AI</button>}
           <details className="relative" open={menuOpen} onToggle={(event) => setMenuOpen(event.currentTarget.open)}>
             <summary className={cn(secondaryActionClass, 'cursor-pointer list-none px-3 text-lg leading-none')} aria-label="Меню документа" title="Меню документа">☰</summary>
             <div className="absolute right-0 top-[calc(100%+6px)] z-50 grid w-[min(320px,90vw)] gap-3 rounded-panel border border-app-border bg-white p-3 shadow-popover">
-              <button className={secondaryActionClass} type="button" onClick={() => { setMenuOpen(false); setNotification('Выгрузка HTML будет доступна в следующей версии.') }}>Выгрузить HTML</button>
-              <div className="grid gap-2 border-t border-app-border pt-3">
-                <strong className="text-sm">Перевод документа</strong>
-                <label className="grid gap-1 text-xs font-semibold text-app-muted">Исходный язык<select className="min-h-8 rounded-control border border-app-border bg-white px-2 text-sm font-normal" value={translationSource} onChange={(event) => setTranslationSource(event.target.value)}><option value="auto">Определить автоматически</option><option value="ru">Русский</option><option value="en">Английский</option><option value="zh">Китайский</option><option value="de">Немецкий</option></select></label>
-                <label className="grid gap-1 text-xs font-semibold text-app-muted">Язык перевода<select className="min-h-8 rounded-control border border-app-border bg-white px-2 text-sm font-normal" value={translationTarget} onChange={(event) => setTranslationTarget(event.target.value)}><option value="ru">Русский</option><option value="en">Английский</option><option value="zh">Китайский</option><option value="de">Немецкий</option><option value="fr">Французский</option></select></label>
-                <button className={secondaryActionClass} type="button" disabled={translation.isPending || assistantBusy} onClick={() => translation.mutate()}>{translation.isPending ? 'Перевод…' : 'Запустить перевод'}</button>
-              </div>
+              <button className={secondaryActionClass} type="button" onClick={() => { setMenuOpen(false); setAssistantOpen((isOpen) => !isOpen) }}>{assistantOpen ? 'Закрыть AI' : 'Открыть AI'}</button>
+              <button className={secondaryActionClass} type="button" disabled={translation.isPending || assistantBusy} onClick={() => { setMenuOpen(false); translation.mutate() }}>{translation.isPending ? 'Перевод…' : 'Перевести на русский'}</button>
+              <button className={secondaryActionClass} type="button" onClick={() => { setMenuOpen(false); documentEditorRef.current?.print(document.title) }}>Сохранить PDF</button>
             </div>
           </details>
         </div>

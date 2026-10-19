@@ -1,0 +1,55 @@
+services:
+  api:
+    command: uvicorn document_service.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src
+    develop:
+      watch:
+        - action: sync
+          path: ./backend/src
+          target: /app/src
+        - action: rebuild
+          path: ./backend/requirements.lock.txt
+        - action: rebuild
+          path: ./backend/Dockerfile
+
+  worker:
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./backend/src
+          target: /app/src
+        - action: rebuild
+          path: ./backend/requirements.lock.txt
+        - action: rebuild
+          path: ./backend/Dockerfile
+
+  frontend:
+    build:
+      target: development
+    command: npm run dev -- --host 0.0.0.0
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+    ports: !override
+      - "8081:5173"
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend/src
+          target: /app/src
+        - action: sync+restart
+          path: ./frontend/index.html
+          target: /app/index.html
+        - action: sync+restart
+          path: ./frontend/vite.config.ts
+          target: /app/vite.config.ts
+        - action: sync+restart
+          path: ./frontend/tailwind.config.ts
+          target: /app/tailwind.config.ts
+        - action: sync+restart
+          path: ./frontend/postcss.config.js
+          target: /app/postcss.config.js
+        - action: rebuild
+          path: ./frontend/package.json
+        - action: rebuild
+          path: ./frontend/package-lock.json
+        - action: rebuild
+          path: ./frontend/Dockerfile

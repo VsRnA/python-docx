@@ -12,6 +12,7 @@ interface DocumentEditorProps {
 export interface DocumentEditorHandle {
   scrollToHeading: (blockId: string | null, headingIndex: number, label?: string) => void
   clearSelection: () => void
+  print: (title?: string) => void
 }
 
 function compactText(value: string, max = 220) {
@@ -149,6 +150,47 @@ export const DocumentEditor = forwardRef<DocumentEditorHandle, DocumentEditorPro
       const doc = frameRef.current?.contentDocument
       doc?.querySelectorAll('[data-ai-selected]').forEach((node) => node.removeAttribute('data-ai-selected'))
     },
+    print(title) {
+      const frame = frameRef.current
+      const doc = frame?.contentDocument
+      const printWindow = frame?.contentWindow
+      if (!doc || !printWindow) return
+
+      const style = doc.createElement('style')
+      style.setAttribute('data-document-print-overrides', 'true')
+      style.textContent = `
+        @media print {
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            min-height: 0 !important;
+            background: #fff !important;
+          }
+          body > article,
+          body > .document-theme,
+          body > .manual-document,
+          body > .sheet {
+            margin: 0 !important;
+            box-shadow: none !important;
+          }
+          [data-ai-selected], [data-outline-target] {
+            outline: none !important;
+          }
+        }
+      `
+      doc.head.appendChild(style)
+      const previousTitle = doc.title
+      if (title?.trim()) doc.title = title.trim()
+
+      const cleanup = () => {
+        style.remove()
+        doc.title = previousTitle
+        printWindow.removeEventListener('afterprint', cleanup)
+      }
+      printWindow.addEventListener('afterprint', cleanup)
+      printWindow.focus()
+      printWindow.print()
+    },
   }), [])
 
   const prepareNavigation = (doc: Document) => {
@@ -234,7 +276,7 @@ export const DocumentEditor = forwardRef<DocumentEditorHandle, DocumentEditorPro
   return (
     <div className="workbench-editor min-h-[calc(100vh-64px)] bg-app-shell">
       <div className="flex justify-center overflow-auto p-6">
-        <iframe ref={frameRef} className="min-h-[calc(100vh-64px)] w-full border-0 bg-white shadow-[0_1px_8px_rgb(0_0_0_/_14%)]" sandbox="allow-same-origin" srcDoc={resolveAssetUrls(html, assetUrls)} onLoad={() => setLoaded(true)} title="HTML-документ" />
+      <iframe ref={frameRef} className="min-h-[calc(100vh-64px)] w-full border-0 bg-white shadow-[0_1px_8px_rgb(0_0_0_/_14%)]" sandbox="allow-same-origin allow-modals" srcDoc={resolveAssetUrls(html, assetUrls)} onLoad={() => setLoaded(true)} title="HTML-документ" />
       </div>
     </div>
   )
