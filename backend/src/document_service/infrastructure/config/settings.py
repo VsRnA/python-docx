@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     astra_reasoning_effort: AstraReasoningEffort = "xhigh"
     astra_edit_reasoning_effort: AstraReasoningEffort = "xhigh"
     astra_repair_reasoning_effort: AstraReasoningEffort = "high"
-    astra_repair_timeout_seconds: float = Field(default=180.0, gt=0)
+    astra_repair_timeout_seconds: float = Field(default=600.0, gt=0)
     astra_request_timeout_seconds: float | None = None
     yandex_gpt_api_key: str = ""
     yandex_folder_id: str = ""

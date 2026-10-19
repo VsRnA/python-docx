@@ -183,17 +183,38 @@ class OpenAIAstraDocumentProcessor:
                         purpose="user_data",
                     )
                 )
+            image_assets = [
+                asset
+                for asset in request.source_assets
+                if asset.mime_type in {"image/png", "image/jpeg", "image/webp", "image/svg+xml"}
+            ]
+            asset_manifest = self._source_asset_manifest(image_assets)
             input_content: list[dict[str, object]] = [
                 {"type": "input_file", "file_id": uploaded_files[0].id},
                 {"type": "input_file", "file_id": uploaded_files[1].id},
             ]
-            for asset in request.source_assets:
-                if asset.mime_type not in {"image/png", "image/jpeg", "image/webp", "image/svg+xml"}:
-                    continue
+            input_content.append(
+                {
+                    "type": "input_text",
+                    "text": (
+                        "SOURCE IMAGE MANIFEST. Use only these exact asset references in HTML. "
+                        "Never use attachment://, file://, blob://, data:, http:// or https:// for image src.\n"
+                        f"{asset_manifest or '(no supported source images)'}"
+                    ),
+                }
+            )
+            for index, asset in enumerate(image_assets, start=1):
                 asset_content = base64.b64decode(asset.base64_data)
                 asset_content, asset_mime_type = prepare_image_for_ai(asset_content, asset.mime_type, asset.filename)
                 input_content.extend(
                     [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                f"Source image image-{index:02d}: {asset.filename}. "
+                                f"Use exactly src=\"asset://{asset.external_id}\" if this image is included."
+                            ),
+                        },
                         {
                             "type": "input_image",
                             "image_url": f"data:{asset_mime_type};base64,{base64.b64encode(asset_content).decode('ascii')}",
@@ -205,6 +226,12 @@ class OpenAIAstraDocumentProcessor:
             response = self._client.responses.create(
                 model=self._model,
                 reasoning={"effort": self._reasoning_effort},
+                instructions=(
+                    "Return only the requested editable HTML. Preserve relevant source images. "
+                    "For source images, use only the exact asset:// references from the supplied "
+                    "SOURCE IMAGE MANIFEST. Never emit attachment://image-NN or any other guessed "
+                    "image URL. Do not invent asset identifiers."
+                ),
                 input=[
                     {
                         "role": "user",
@@ -237,7 +264,12 @@ class OpenAIAstraDocumentProcessor:
         )
         self._last_response_audit = audit
         try:
-            return self._validate_html_response(response, audit)
+            return self._validate_html_response(
+                response,
+                audit,
+                asset_references=self._attachment_asset_references(image_assets),
+                asset_manifest=asset_manifest,
+            )
         finally:
             for uploaded in uploaded_files:
                 with suppress(Exception):
@@ -258,10 +290,18 @@ class OpenAIAstraDocumentProcessor:
             raise ValueError("OpenAI response does not contain HTML")
         return html
 
-    def _validate_html_response(self, response, audit: AstraResponseAudit) -> str:
+    def _validate_html_response(
+        self,
+        response,
+        audit: AstraResponseAudit,
+        *,
+        asset_references: dict[str, str] | None = None,
+        asset_manifest: str | None = None,
+    ) -> str:
         raw_response = getattr(response, "output_text", None)
         try:
             html = normalize_model_html(normalize_html(self._extract_html_response(raw_response)))
+            html = self._rewrite_known_attachment_references(html, asset_references or {})
             HtmlContractValidator(None).validate(html)
             return html
         except (ValueError, TypeError) as error:
@@ -277,7 +317,12 @@ class OpenAIAstraDocumentProcessor:
             )
             self._last_response_audit = invalid_audit
             try:
-                return self._repair_html_fragment(raw_response or "", str(error))
+                return self._repair_html_fragment(
+                    raw_response or "",
+                    str(error),
+                    asset_references=asset_references or {},
+                    asset_manifest=asset_manifest,
+                )
             except Exception as repair_error:
                 raise AstraContractError(
                     "GPT Astra 6 returned invalid HTML and the repair request also failed",
@@ -286,8 +331,17 @@ class OpenAIAstraDocumentProcessor:
                     audit=invalid_audit,
                 ) from repair_error
 
-    def _repair_html_fragment(self, html: str, validation_error: str) -> str:
+    def _repair_html_fragment(
+        self,
+        html: str,
+        validation_error: str,
+        *,
+        asset_references: dict[str, str] | None = None,
+        asset_manifest: str | None = None,
+    ) -> str:
         logger.info("Astra HTML repair started validation_error=%s", validation_error)
+        asset_references = asset_references or {}
+        asset_manifest = asset_manifest or "(no source image manifest)"
         response = self._client.with_options(timeout=self._repair_timeout_seconds).responses.create(
             model=self._model,
             reasoning={"effort": self._repair_reasoning_effort},
@@ -296,7 +350,10 @@ class OpenAIAstraDocumentProcessor:
                 "HTML fragment rooted in <article>. Preserve all text, images, links, tables and "
                 "meaningful structure. Do not invent content. Remove or replace the violating "
                 "construct. Never use <script>, <template>, <form>, <iframe>, <object>, <embed>, "
-                "<applet>, <base>, event-handler attributes, external stylesheets or unsafe URLs."
+                "<applet>, <base>, event-handler attributes, external stylesheets or unsafe URLs. "
+                "For images, preserve only exact asset:// references from the supplied manifest. "
+                "Never use attachment://, file://, blob://, data:, http:// or https:// in image src. "
+                f"Source image manifest:\n{asset_manifest}"
             ),
             input=(
                 "Validation error:\n"
@@ -307,9 +364,47 @@ class OpenAIAstraDocumentProcessor:
             text={"format": {"type": "text"}},
         )
         repaired = self._extract_html_response(getattr(response, "output_text", None))
+        repaired = self._rewrite_known_attachment_references(repaired, asset_references)
         HtmlContractValidator(None).validate(repaired)
         logger.info("Astra HTML repair completed bytes=%s", len(repaired.encode("utf-8")))
         return repaired
+
+    @staticmethod
+    def _source_asset_manifest(assets: list[ProcessedAsset]) -> str:
+        return "\n".join(
+            f"image-{index:02d}: asset://{asset.external_id} "
+            f"({asset.filename}, {asset.mime_type}, source pages: "
+            f"{', '.join(map(str, asset.source_pages)) or 'unknown'})"
+            for index, asset in enumerate(assets, start=1)
+        )
+
+    @staticmethod
+    def _attachment_asset_references(assets: list[ProcessedAsset]) -> dict[str, str]:
+        references: dict[str, str] = {}
+        for index, asset in enumerate(assets, start=1):
+            reference = f"asset://{asset.external_id}"
+            references[f"image-{index:02d}"] = reference
+            references[f"image-{index}"] = reference
+            references[asset.filename] = reference
+            references[asset.filename.lower()] = reference
+        return references
+
+    @staticmethod
+    def _rewrite_known_attachment_references(html: str, references: dict[str, str]) -> str:
+        if not references:
+            return html
+
+        pattern = re.compile(r"attachment://([^\"'\s>]+)", flags=re.IGNORECASE)
+
+        def replace(match: re.Match[str]) -> str:
+            key = match.group(1)
+            replacement = references.get(key) or references.get(key.lower())
+            if replacement is None:
+                return match.group(0)
+            logger.warning("Rewriting unsupported image reference attachment://%s to %s", key, replacement)
+            return replacement
+
+        return pattern.sub(replace, html)
 
     @staticmethod
     def _detect_html_language(html: str) -> str:
